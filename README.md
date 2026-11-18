@@ -77,10 +77,10 @@ LTI 1.3: Canvas signerer id_tokens med `CANVAS_LTI_JWK`, som indsættes via `con
 
 ### Canvas
 
-**CSV via SIS-import.** Pak filerne og upload zip'en under Admin → kontoen → SIS Import:
+**CSV via SIS-import.** Hent filerne lokalt, pak dem og upload `canvas-sis.zip` under Admin → kontoen → SIS Import:
 
 ```bash
-cd testdata/canvas && zip ../canvas-sis.zip users.csv courses.csv sections.csv enrollments.csv
+for f in users courses sections enrollments; do curl -fsSLO https://raw.githubusercontent.com/EmilMoe/lms/main/testdata/canvas/$f.csv; done && zip canvas-sis.zip users.csv courses.csv sections.csv enrollments.csv
 ```
 
 Formatet er beskrevet i Canvas' dokumentation for SIS Import Format. Samme import kan køres igen; rækker opdateres via deres ID.
