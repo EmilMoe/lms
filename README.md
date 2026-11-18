@@ -129,12 +129,11 @@ Canvas Data 2 (DAP), som Nexus henter Course Access og Course Access Log fra, er
 
 - Ved hver forespørgsel skriver mocken besøg for tiden siden sidst og frem til nu. Det, der er skrevet, ændres aldrig, og der kommer aldrig besøg efter nu. Når Nexus synkroniserer dagligt, kommer der altså en dags nye besøg til hver gang.
 - Besøgene hører til de faktiske kurser og personer i Canvas. Der kommer kun besøg, når
-  - tilmeldingen er aktiv (elev, lærer eller TA), og kurset er publiceret,
-  - tidspunktet ligger inden for kursets datoer (eller termens, hvis kurset ikke har nogen) og tilmeldingens egne datoer, når de er sat,
-  - og tilmeldingen fandtes på tidspunktet.
-- En ny tilmelding får besøg fra det tidspunkt, den blev oprettet. En slettet tilmelding får ikke flere besøg, men beholder de gamle.
+  - tilmeldingen er aktiv eller inviteret (elev, lærer eller TA), og kurset er publiceret. Inviteret tæller med, fordi testbrugere uden adgangskode ikke kan acceptere invitationer, og fordi Nexus selv regner dem som tilmeldte,
+  - og tidspunktet ligger inden for kursets datoer (eller termens, hvis kurset ikke har nogen) og tilmeldingens egne datoer, når de er sat.
+- Første gang mocken ser en tilmelding, får den 30 dages historik bagud. Det gælder også et kursus, du opretter i dag, så der straks er noget at se. Historikken skrives med tidspunktet "nu" og kommer derfor med i næste sync. Derefter skrives kun tiden siden sidst.
+- En slettet tilmelding får ikke flere besøg, men beholder de gamle.
 - Hver person har en fast profil pr. kursus: hvor aktiv, hvornår på døgnet, hvor meget på mobilappen og i weekenden. Lærere er mest inde i arbejdstiden, elever også om aftenen. Trafikken er en blanding af browser, Canvas-app og lidt API, med enkelte POST-kald og fejlsvar, som Nexus sorterer fra.
-- Første gang fyldes 30 dage bagud, så der er noget at se med det samme. Tilmeldinger, der fandtes, da mocken startede, regnes som en del af et igangværende semester og får hele perioden, selv om de er importeret for nylig.
 - Canvas' egne `page_views` kommer med, hvis Canvas gemmer dem i databasen.
 
 **Som den rigtige Canvas Data 2:** Et snapshot giver besøgene fra de seneste 30 dage. Et incremental-kald (`since`) giver det, der er skrevet siden, og et `since` over 30 dage tilbage afvises, så Nexus må tage et nyt snapshot. Nexus beholder selv alt, den har hentet.
@@ -159,7 +158,7 @@ Indstillinger i `<path>/canvas/.env` (bevares ved opdatering, genstart med `dock
 |---|---|---|
 | `DAP_MOCK_COURSE_ACCESS` | `true` | `false` svarer til en rigtig nøgle uden web logs, så Nexus' "without course access"-vej kan testes |
 | `DAP_MOCK_SYNTHETIC_WEB_LOGS` | `true` | `false` giver kun Canvas' egne `page_views` |
-| `DAP_MOCK_BACKFILL_DAYS` | `30` | dage der fyldes bagud første gang |
+| `DAP_MOCK_BACKFILL_DAYS` | `30` | dage der fyldes bagud, første gang mocken ser en tilmelding |
 | `DAP_MOCK_RETENTION_DAYS` | `30` | hvor langt et snapshot og `since` går tilbage (30 som Canvas Data 2) |
 | `DAP_MOCK_REFRESH_HOURS` | `0` | fx `4`: data kun op til seneste opdatering hver 4. time, som Canvas Data 2. `0` = altid til nu |
 

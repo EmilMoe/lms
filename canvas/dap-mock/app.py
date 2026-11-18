@@ -173,10 +173,14 @@ def canvas_records(table: str, since: datetime | None, until: datetime):
 # Besøgene gemmes i mockens egen SQLite (DATA_DIR/web_logs.sqlite), aldrig i Canvas' database. Hver
 # forespørgsel fører lageret frem til "nu": der skrives besøg for tiden siden sidst, ud fra Canvas'
 # tilmeldinger, som de er nu. Det skrevne ændres aldrig, så historikken står fast: en slettet
-# tilmelding beholder sine gamle besøg, en ny får besøg fra den blev oprettet, og intet ligger efter nu.
+# tilmelding beholder sine gamle besøg, og intet ligger efter nu.
 #
-# Første gang fyldes BACKFILL_DAYS bagud, så der er noget at se. Tilmeldinger, der fandtes før mocken
-# startede, regnes som en del af et igangværende semester; derefter tæller tilmeldingens created_at.
+# Første gang mocken ser en tilmelding (også ved allerførste kørsel), fyldes BACKFILL_DAYS bagud, inden
+# for kursets/termens datoer, så et nyt kursus straks har historik. De besøg skrives med written_at = nu
+# og kommer derfor med i næste incremental-forespørgsel; derefter skrives kun tiden siden sidst.
+#
+# "invited" tæller som aktiv: testbrugere uden adgangskode kan ikke acceptere invitationer, og Nexus
+# regner dem med som tilmeldte.
 #
 # Hver besøg har et written_at (hvornår mocken skrev det). Incremental-forespørgsler filtrerer på det,
 # som DAP filtrerer på ændringstidspunkt, så snapshot og incremental altid er enige.
@@ -276,16 +280,13 @@ def aware(value) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
-def active_window(row: dict, start: datetime, end: datetime, started_at: datetime) -> tuple[datetime, datetime]:
+def active_window(row: dict, start: datetime, end: datetime) -> tuple[datetime, datetime]:
     """Den del af (start, end], hvor tilmeldingen kunne give besøg: inden for kursets (ellers termens)
-    og tilmeldingens datoer, og efter tilmeldingen blev oprettet, hvis det var efter mocken startede."""
+    og tilmeldingens egne datoer."""
     lo, hi = start, end
     for bound in (aware(row["course_start"] or row["term_start"]), aware(row.get("start_at"))):
         if bound:
             lo = max(lo, bound)
-    created = aware(row.get("created_at"))
-    if created and created > started_at:
-        lo = max(lo, created)
     for bound in (aware(row["course_end"] or row["term_end"]), aware(row.get("end_at"))):
         if bound:
             hi = min(hi, bound)
@@ -306,6 +307,7 @@ class WebLogStore:
                 create index if not exists web_logs_ts on web_logs (ts);
                 create index if not exists web_logs_written_at on web_logs (written_at);
                 create table if not exists state (key text primary key, value text not null);
+                create table if not exists seen_enrollments (id integer primary key, seen_at text not null);
                 """
             )
 
@@ -319,11 +321,7 @@ class WebLogStore:
     def advance(self, until: datetime) -> None:
         """Skriver besøgene fra sidst lageret blev ført frem og til `until`."""
         with self.lock, self.connect() as conn:
-            started_at = self.state(conn, "started_at")
-            start = self.state(conn, "generated_until")
-            if start is None:
-                started_at, start = until, until - timedelta(days=BACKFILL_DAYS)
-                conn.execute("insert or replace into state values ('started_at', ?)", (iso(started_at),))
+            start = self.state(conn, "generated_until") or until - timedelta(days=BACKFILL_DAYS)
             if until <= start:
                 return
 
@@ -331,7 +329,7 @@ class WebLogStore:
             rows = []
             with db() as pg:
                 if SYNTHETIC:
-                    rows += self.synthetic(pg, start, until, started_at, written_at)
+                    rows += self.synthetic(pg, conn, start, until, written_at)
                 rows += self.page_views(pg, start, until, written_at)
 
             conn.executemany("insert or ignore into web_logs values (?, ?, ?, ?, ?, ?)", rows)
@@ -339,20 +337,26 @@ class WebLogStore:
             print(f"web logs: wrote {len(rows)} visits for {iso(start)} - {iso(until)}", flush=True)
 
     @staticmethod
-    def synthetic(pg, start: datetime, until: datetime, started_at: datetime, written_at: str) -> list:
+    def synthetic(pg, conn, start: datetime, until: datetime, written_at: str) -> list:
         enrollments = pg.execute(
             """select e.*, c.start_at as course_start, c.conclude_at as course_end,
                       t.start_at as term_start, t.end_at as term_end
                from enrollments e
                join courses c on c.id = e.course_id
                left join enrollment_terms t on t.id = c.enrollment_term_id
-               where e.workflow_state = 'active' and c.workflow_state = 'available'
+               where e.workflow_state in ('active', 'invited') and c.workflow_state = 'available'
                  and e.type in ('StudentEnrollment', 'TeacherEnrollment', 'TaEnrollment')"""
         ).fetchall()
 
+        seen = {r[0] for r in conn.execute("select id from seen_enrollments")}
+        backfill_from = until - timedelta(days=BACKFILL_DAYS)
         rows = []
         for row in enrollments:
-            lo, hi = active_window(row, start, until, started_at)
+            # En tilmelding, mocken ikke har set før, får historik bagud; ellers kun tiden siden sidst.
+            new = row["id"] not in seen
+            lo, hi = active_window(row, min(start, backfill_from) if new else start, until)
+            if new:
+                conn.execute("insert or ignore into seen_enrollments values (?, ?)", (row["id"], written_at))
             day = lo.date()
             while lo < hi and day <= hi.date():
                 for at, value in synthetic_day(row["user_id"], row["course_id"], row["type"] in TEACHER_TYPES, day):
