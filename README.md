@@ -64,7 +64,11 @@ curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh | sudo 
 - `--owner` er den linux-bruger, der ejer stakken og kører `docker compose` (skal være i docker-gruppen). Brugerens `docker login` bruges til at hente fra ghcr.io.
 - `canvas.sh` henter imaget, genererer hemmeligheder og LTI-nøglen, opsætter databasen første gang (ellers `db:migrate`) og starter web og jobs. Imaget er som standard `ghcr.io/<repo-ejer>/canvas-lms:latest`; brug `--image=` til et bestemt tag.
 - `moodle.sh` starter Moodle, som installerer sig selv ved første start (nogle minutter).
-- Opdatering: kør samme kommando igen. Kodeord og nøgler bevares.
+- Opdatering: kør kommandoen igen med kun `--path`. Domæne, e-mail, image/tag og Traefik-indstillinger læses fra `<path>/<lms>/.env`, og ejeren fra stakmappen. Flag, du angiver, vinder. Kodeord, nøgler og `data/` bevares, mens `docker-compose.yml` og `config/` erstattes af repoets version:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh | sudo bash -s -- canvas --path=/mnt/<volume>
+  ```
 - `--help` viser alle flag.
 
 Tag en sikkerhedskopi af `<path>/canvas/.env`. `ENCRYPTION_KEY` må aldrig ændres, og uden den kan databasen ikke læses.

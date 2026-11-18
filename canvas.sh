@@ -5,28 +5,29 @@
 #                    --email=admin@example.com --owner=deploy
 #
 # Lægger stakken i <path>/canvas (docker-compose.yml, config/, .env, data/).
-# Kan køres igen efter "git pull": compose, config og indstillinger opdateres,
-# mens hemmeligheder (ENCRYPTION_KEY m.fl.) bevares. Databasen sættes kun op første gang.
+# Opdatering: kør igen med kun --path; øvrige indstillinger læses fra <path>/canvas/.env.
+# Compose og config opdateres, hemmeligheder (ENCRYPTION_KEY m.fl.) bevares.
+# Databasen sættes kun op første gang.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 
 # Standard: ghcr.io/<ejer af dette repos origin>/canvas-lms:latest
-IMAGE=""
+IMAGE="" DEFAULT_IMAGE=""
 origin=$(git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
 gh_owner=${LMS_GITHUB_OWNER:-}   # sat af install.sh, når der ikke er et git-checkout
 if [[ -z $gh_owner && $origin =~ github\.com[:/]([^/]+)/ ]]; then
   gh_owner=${BASH_REMATCH[1]}
 fi
 if [[ -n $gh_owner ]]; then
-  IMAGE="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<<"$gh_owner")/canvas-lms:latest"
+  DEFAULT_IMAGE="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<<"$gh_owner")/canvas-lms:latest"
 fi
 
 usage() {
-  sed -n '2,9p' "$0"
+  sed -n '2,10p' "$0"
   echo
   echo "Canvas-flag:"
-  echo "  --image=REF                   Canvas-image (standard: ${IMAGE:-ingen, angiv --image})"
+  echo "  --image=REF                   Canvas-image (standard: værdien i .env, ellers ${DEFAULT_IMAGE:-ingen, angiv --image})"
   common_usage
 }
 
@@ -38,11 +39,13 @@ for arg in "$@"; do
     *) usage >&2; die "ukendt flag: $arg" ;;
   esac
 done
-validate_common
-[[ -n $IMAGE ]] || die "angiv --image=ghcr.io/<ejer>/canvas-lms:latest"
-
 stack="$DATA_PATH/canvas"
 env_file="$stack/.env"
+load_previous "$stack" CANVAS
+: "${IMAGE:=$(env_value "$env_file" CANVAS_IMAGE)}"
+: "${IMAGE:=$DEFAULT_IMAGE}"
+validate_common
+[[ -n $IMAGE ]] || die "angiv --image=ghcr.io/<ejer>/canvas-lms:latest"
 
 step "Henter $IMAGE (flere GB første gang; senere kun ændrede lag)"
 as_owner docker pull "$IMAGE" || die "kunne ikke hente $IMAGE.

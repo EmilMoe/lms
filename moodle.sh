@@ -5,19 +5,20 @@
 #                    --email=admin@example.com --owner=deploy
 #
 # Lægger stakken i <path>/moodle (docker-compose.yml, .env, data/).
-# Kan køres igen efter "git pull": compose og indstillinger opdateres, mens
-# kodeord bevares. Moodle installerer/opgraderer sig selv ved start.
+# Opdatering: kør igen med kun --path; øvrige indstillinger læses fra <path>/moodle/.env.
+# Compose og indstillinger opdateres, kodeord bevares. Moodle installerer/opgraderer
+# sig selv ved start.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 
-TAG="5.3"
+TAG="" DEFAULT_TAG="5.3"
 
 usage() {
-  sed -n '2,9p' "$0"
+  sed -n '2,10p' "$0"
   echo
   echo "Moodle-flag:"
-  echo "  --tag=TAG                     oksigenia/moodle-tag (standard: $TAG, LTS)"
+  echo "  --tag=TAG                     oksigenia/moodle-tag (standard: værdien i .env, ellers $DEFAULT_TAG, LTS)"
   common_usage
 }
 
@@ -29,10 +30,12 @@ for arg in "$@"; do
     *) usage >&2; die "ukendt flag: $arg" ;;
   esac
 done
-validate_common
-
 stack="$DATA_PATH/moodle"
 env_file="$stack/.env"
+load_previous "$stack" MOODLE
+: "${TAG:=$(env_value "$env_file" MOODLE_TAG)}"
+: "${TAG:=$DEFAULT_TAG}"
+validate_common
 
 step "Installerer stakken i $stack"
 install_stack "$REPO_DIR/moodle" "$stack"
