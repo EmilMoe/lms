@@ -40,6 +40,19 @@ command -v docker >/dev/null || { echo "Docker er ikke installeret." >&2; exit 1
 device="/dev/disk/by-id/scsi-0DO_Volume_${volume}"
 step() { printf '\n==> %s\n' "$*"; }
 
+# Stopper scriptet med en fejl, efter Docker er stoppet, startes containerd og
+# Docker igen, så serveren (fx Traefik) ikke efterlades nede.
+docker_stopped=0
+on_error() {
+  local rc=$? line=$1
+  echo "Fejl (kode $rc) på linje $line i $0." >&2
+  if [[ $docker_stopped -eq 1 ]]; then
+    echo "Starter containerd og Docker igen..." >&2
+    systemctl start containerd.service docker.service || true
+  fi
+}
+trap 'on_error $LINENO' ERR
+
 step "Plads før"
 df -h / || true
 docker system df || true
@@ -113,13 +126,14 @@ if [[ $move_docker -eq 1 ]]; then
   current=$(docker info --format '{{.DockerRootDir}}')
   uses_containerd_store=0
   docker info --format '{{json .DriverStatus}}' | grep -q 'io.containerd.snapshotter' && uses_containerd_store=1
-  ctr_current=$(containerd config dump 2>/dev/null | sed -n 's/^root = "\(.*\)"$/\1/p' | head -n1)
+  ctr_current=$(containerd config dump 2>/dev/null | sed -n "s/^root = [\"']\(.*\)[\"']\$/\1/p" | head -n1)
   ctr_current=${ctr_current:-/var/lib/containerd}
 
   step "Docker data-root: $current -> $target (containerd image store: $uses_containerd_store)"
   if [[ $current == "$target" && ( $uses_containerd_store -eq 0 || $ctr_current == "$ctr_target" ) ]]; then
     echo "Allerede flyttet."
   else
+    docker_stopped=1
     systemctl stop docker.socket docker.service
     if [[ $current != "$target" ]]; then
       mkdir -p "$target"
@@ -144,9 +158,16 @@ PY2
     if [[ $uses_containerd_store -eq 1 && $ctr_current != "$ctr_target" ]]; then
       systemctl stop containerd.service
       mkdir -p "$ctr_target"
-      rsync -aHAX --numeric-ids --info=progress2 "${ctr_current}/" "${ctr_target}/"
+      # --delete: en kopi fra et tidligere, afbrudt forsøg bringes helt i trit.
+      rsync -aHAX --delete --numeric-ids --info=progress2 "${ctr_current}/" "${ctr_target}/"
       cfg=/etc/containerd/config.toml
-      [[ -f $cfg ]] || containerd config default > "$cfg"
+      if [[ ! -f $cfg ]]; then
+        # Ingen config (containerd kører på standardværdier): skriv en minimal en
+        # med samme config-version som den installerede containerd.
+        mkdir -p /etc/containerd
+        ver=$(containerd config default | sed -n 's/^version *= *\([0-9]*\).*/\1/p' | head -n1)
+        printf 'version = %s\n' "${ver:-2}" > "$cfg"
+      fi
       if grep -q '^root *=' "$cfg"; then
         sed -i "s|^root *=.*|root = \"${ctr_target}\"|" "$cfg"
       else
@@ -157,9 +178,12 @@ PY2
         > /etc/systemd/system/containerd.service.d/10-require-volume.conf
       systemctl daemon-reload
       systemctl start containerd.service
+      new_root=$(containerd config dump | sed -n "s/^root = [\"']\(.*\)[\"']\$/\1/p" | head -n1)
+      [[ $new_root == "$ctr_target" ]] || { echo "containerd bruger ikke $ctr_target (men '$new_root')!" >&2; false; }
     fi
     systemctl start docker.service
-    [[ $(docker info --format '{{.DockerRootDir}}') == "$target" ]] || { echo "Docker bruger ikke $target!" >&2; exit 1; }
+    docker_stopped=0
+    [[ $(docker info --format '{{.DockerRootDir}}') == "$target" ]] || { echo "Docker bruger ikke $target!" >&2; false; }
     for old in "$current" "$ctr_current"; do
       if [[ $old != "$mountpoint"/* && -d $old ]]; then
         if [[ $old == "$ctr_current" && $uses_containerd_store -eq 0 ]]; then continue; fi
