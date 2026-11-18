@@ -14,8 +14,12 @@ source "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 # Standard: ghcr.io/<ejer af dette repos origin>/canvas-lms:latest
 IMAGE=""
 origin=$(git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
-if [[ $origin =~ github\.com[:/]([^/]+)/ ]]; then
-  IMAGE="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}")/canvas-lms:latest"
+gh_owner=${LMS_GITHUB_OWNER:-}   # sat af install.sh, når der ikke er et git-checkout
+if [[ -z $gh_owner && $origin =~ github\.com[:/]([^/]+)/ ]]; then
+  gh_owner=${BASH_REMATCH[1]}
+fi
+if [[ -n $gh_owner ]]; then
+  IMAGE="ghcr.io/$(tr '[:upper:]' '[:lower:]' <<<"$gh_owner")/canvas-lms:latest"
 fi
 
 usage() {
@@ -98,10 +102,10 @@ migrated=$(as_owner docker compose exec -T postgres \
   psql -U canvas -d canvas_production -tAc "select to_regclass('public.accounts') is not null")
 if [[ $migrated != t ]]; then
   step "Første opsætning: skema, konto og admin (tager nogle minutter)"
-  as_owner docker compose --profile setup run --rm setup
+  as_owner docker compose --profile setup run --rm -T setup
 else
   step "Databasen findes allerede: kører migreringer"
-  as_owner docker compose run --rm --no-deps jobs bin/rails db:migrate
+  as_owner docker compose run --rm -T --no-deps jobs bin/rails db:migrate
 fi
 
 step "Starter Canvas"

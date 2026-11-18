@@ -8,6 +8,7 @@ server/setup-server.sh               swap, volume-mount, Docker på volumet
 canvas.sh  + canvas/                 installerer Canvas, Postgres og Redis bag Traefik
 moodle.sh  + moodle/                 installerer Moodle og MariaDB bag Traefik
 lib/common.sh                        fælles kode til de to scripts
+install.sh                           kører canvas.sh/moodle.sh direkte fra GitHub (curl)
 ```
 
 Scriptene kopierer compose-filerne til `<path>/canvas` og `<path>/moodle` på volumet og skriver `.env` med tilfældige kodeord dér (chmod 600). Domæner, e-mail, stier og hemmeligheder gives som flag på serveren og kommer aldrig i repoet eller imaget.
@@ -51,17 +52,19 @@ DNS for begge domæner skal pege på dropletten.
 
 ## 4. Canvas og Moodle
 
-Klon repoet på serveren og kør som en bruger med sudo:
+Kør direkte fra GitHub som en bruger med sudo. Der skal ikke klones noget:
 
 ```bash
-sudo ./canvas.sh --domain=canvas.example.com --path=/mnt/<volume> --email=admin@example.com --owner=deploy
-sudo ./moodle.sh --domain=moodle.example.com --path=/mnt/<volume> --email=admin@example.com --owner=deploy
+curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh | sudo bash -s -- canvas --domain=canvas.example.com --path=/mnt/<volume> --email=admin@example.com --owner=deploy
+curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh | sudo bash -s -- moodle --domain=moodle.example.com --path=/mnt/<volume> --email=admin@example.com --owner=deploy
 ```
+
+`install.sh` henter repoet som tarball til en midlertidig mappe, kører `canvas.sh` eller `moodle.sh` med flagene og rydder op. Lås til et tag eller en commit med `sudo LMS_REF=<tag-eller-sha> bash -s -- ...`. Fra et klonet repo virker `sudo ./canvas.sh ...` og `sudo ./moodle.sh ...` med de samme flag.
 
 - `--owner` er den linux-bruger, der ejer stakken og kører `docker compose` (skal være i docker-gruppen). Brugerens `docker login` bruges til at hente fra ghcr.io.
 - `canvas.sh` henter imaget, genererer hemmeligheder og LTI-nøglen, opsætter databasen første gang (ellers `db:migrate`) og starter web og jobs. Imaget er som standard `ghcr.io/<repo-ejer>/canvas-lms:latest`; brug `--image=` til et bestemt tag.
 - `moodle.sh` starter Moodle, som installerer sig selv ved første start (nogle minutter).
-- Opdatering: `git pull` og kør scriptet igen med samme flag. Kodeord og nøgler bevares.
+- Opdatering: kør samme kommando igen. Kodeord og nøgler bevares.
 - `--help` viser alle flag.
 
 Tag en sikkerhedskopi af `<path>/canvas/.env`. `ENCRYPTION_KEY` må aldrig ændres, og uden den kan databasen ikke læses.
