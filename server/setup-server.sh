@@ -10,7 +10,9 @@
 #
 #   --volume            DO-volumets navn (enheden er /dev/disk/by-id/scsi-0DO_Volume_<navn>)
 #   --swap              størrelse på /swapfile (standard 4G, 0 = spring over)
-#   --docker-data-root  mulighed 2: flyt /var/lib/docker til /mnt/<navn>/docker
+#   --docker-data-root  mulighed 2: flyt /var/lib/docker til <monteringspunkt>/docker
+#                       (et volume, der allerede er monteret, beholder sin sti;
+#                       ellers /mnt/<navn med _>, som DO's auto-mount)
 #   --format            formatér volumet med ext4 HVIS det ikke har et filsystem.
 #                       Uden flaget stopper scriptet i stedet. Et volume med data
 #                       formateres aldrig.
@@ -25,7 +27,7 @@ while [[ $# -gt 0 ]]; do
     --swap) swap_size=$2; shift 2 ;;
     --docker-data-root) move_docker=1; shift ;;
     --format) allow_format=1; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Ukendt argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -36,7 +38,6 @@ done
 command -v docker >/dev/null || { echo "Docker er ikke installeret." >&2; exit 1; }
 
 device="/dev/disk/by-id/scsi-0DO_Volume_${volume}"
-mountpoint="/mnt/${volume}"
 step() { printf '\n==> %s\n' "$*"; }
 
 step "Plads før"
@@ -64,8 +65,13 @@ EOF
 fi
 
 # ---------------------------------------------------------------- 2. volume
-step "Volume $volume -> $mountpoint"
+step "Volume $volume"
 [[ -b $device ]] || { echo "Fandt ikke $device. Er volumet tilsluttet denne droplet?" >&2; exit 1; }
+# Er volumet allerede monteret (fx af DO's auto-mount), bruges den sti uændret.
+# DO's konvention er /mnt/<navn med _ i stedet for ->, fx "my-volume" -> /mnt/my_volume.
+existing=$(findmnt -rn -o TARGET -S "$(readlink -f "$device")" | head -n1 || true)
+mountpoint=${existing:-/mnt/${volume//-/_}}
+echo "Monteringspunkt: $mountpoint${existing:+ (allerede monteret)}"
 
 fstype=$(blkid -o value -s TYPE "$device" || true)
 if [[ -z $fstype ]]; then
