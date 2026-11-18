@@ -77,17 +77,26 @@ LTI 1.3: Canvas signerer id_tokens med `CANVAS_LTI_JWK`, som indsættes via `con
 
 ### Canvas
 
-**CSV via SIS-import.** Hent filerne lokalt, pak dem og upload `canvas-sis.zip` under Admin → kontoen → SIS Import:
+**Brugere, kurser og tilmeldinger via SIS-import:**
 
-```bash
-for f in users courses sections enrollments; do curl -fsSLO https://raw.githubusercontent.com/EmilMoe/lms/main/testdata/canvas/$f.csv; done && zip canvas-sis.zip users.csv courses.csv sections.csv enrollments.csv
-```
+1. Kør denne kommando på din egen maskine. Den henter de fire CSV-filer fra `testdata/canvas/` ned i den mappe, du står i, og pakker dem i `canvas-sis.zip`:
 
-Formatet er beskrevet i Canvas' dokumentation for SIS Import Format. Samme import kan køres igen; rækker opdateres via deres ID.
+   ```bash
+   for f in users courses sections enrollments; do curl -fsSLO https://raw.githubusercontent.com/EmilMoe/lms/main/testdata/canvas/$f.csv; done && zip canvas-sis.zip users.csv courses.csv sections.csv enrollments.csv
+   ```
 
-**Kursusindhold** (moduler, sider, opgaver) importeres pr. kursus fra en Common Cartridge-fil (`.imscc`) eller en Canvas-kursuseksport: kurset → Indstillinger → Importér kursusindhold.
+2. Log ind i Canvas som admin. Klik på **Admin** i menuen yderst til venstre, og vælg rodkontoen (den øverste konto på listen).
+3. Klik på **SIS Import** i kontoens menu.
+4. Vælg `canvas-sis.zip` under "Choose a file". Lad "This is a full batch update" være slået fra, ellers sletter Canvas alt det, der ikke står i filerne. Klik på **Process Data**.
+5. Når importen er færdig, viser siden, hvad der er oprettet: 3 kurser, 5 sektioner (hold), 20 brugere og 36 tilmeldinger. Eventuelle fejl og advarsler står på samme side.
 
-**REST-API** til alt andet (opgaver, afleveringer, karakterer): opret en token under Konto → Indstillinger → "+ Ny adgangstoken" og brug fx `POST /api/v1/courses/:id/assignments`.
+Kurserne ligger derefter under Admin → rodkontoen → **Courses**. Du ser kurset som en lærer eller elev ved at åbne **People** i kurset, klikke på brugeren og vælge **Act as User**.
+
+Importen kan køres igen. Canvas opdaterer rækkerne ud fra deres ID (`user_id`, `course_id` osv.), så der kommer ikke dubletter. Filformatet er beskrevet i Canvas' dokumentation under "SIS Import Format".
+
+**Kursusindhold** (moduler, sider, opgaver) ligger ikke i `testdata/`. Har du en Common Cartridge-fil (`.imscc`) eller en eksport fra et andet Canvas-kursus, importerer du den i kurset under Settings → **Import Course Content**.
+
+**REST-API** til alt andet (opgaver, afleveringer, karakterer): opret en token under Account → Settings → **+ New Access Token** og brug fx `POST /api/v1/courses/:id/assignments`.
 
 ### Moodle
 
