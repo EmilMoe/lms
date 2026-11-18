@@ -1,0 +1,6 @@
+section_id,course_id,name,status
+DAN101-A,DAN101,DAN101 hold A,active
+DAN101-B,DAN101,DAN101 hold B,active
+MAT101-A,MAT101,MAT101 hold A,active
+MAT101-B,MAT101,MAT101 hold B,active
+ENG101-A,ENG101,ENG101 hold A,active

@@ -71,6 +71,39 @@ Tag en sikkerhedskopi af `<path>/canvas/.env`. `ENCRYPTION_KEY` må aldrig ændr
 
 LTI 1.3: Canvas signerer id_tokens med `CANVAS_LTI_JWK`, som indsættes via `config/dynamic_settings.yml` i stedet for Consul. Den offentlige nøgle ligger på `https://<canvas>/api/lti/security/jwks`. Developer keys oprettes som admin under Admin → Developer Keys.
 
+## 5. Testdata
+
+`testdata/` indeholder det samme lille, fiktive datasæt til begge LMS'er: 3 kurser (DAN101, MAT101, ENG101), 2 lærere og 18 elever med samme ID'er. Brugerne har ingen adgangskode, fordi repoet er offentligt og serveren ligger på internettet. Se data som en bruger med "Act as user" (Canvas) eller "Log in as" (Moodle).
+
+### Canvas
+
+**CSV via SIS-import.** Pak filerne og upload zip'en under Admin → kontoen → SIS Import:
+
+```bash
+cd testdata/canvas && zip ../canvas-sis.zip users.csv courses.csv sections.csv enrollments.csv
+```
+
+Formatet er beskrevet i Canvas' dokumentation for SIS Import Format. Samme import kan køres igen; rækker opdateres via deres ID.
+
+**Kursusindhold** (moduler, sider, opgaver) importeres pr. kursus fra en Common Cartridge-fil (`.imscc`) eller en Canvas-kursuseksport: kurset → Indstillinger → Importér kursusindhold.
+
+**REST-API** til alt andet (opgaver, afleveringer, karakterer): opret en token under Konto → Indstillinger → "+ Ny adgangstoken" og brug fx `POST /api/v1/courses/:id/assignments`.
+
+### Moodle
+
+**Indbygget generator** til kurser med aktiviteter, brugere og forum-indlæg (størrelse XS-XXL):
+
+```bash
+cd <path>/moodle && sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST1 --size=S
+```
+
+Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
+
+**CSV-upload** af datasættet i `testdata/moodle/`, i denne rækkefølge:
+
+1. Site administration → Courses → Upload courses → `courses.csv`. Kurserne lægges i kategori 1.
+2. Site administration → Users → Upload users → `users.csv`. Brugerne får `auth=nologin` og tilmeldes kurserne via `course1`/`role1`.
+
 ## RAM
 
 Begge LMS'er kan køre samtidig, når de bare leverer demodata gennem API'et. Omtrentligt forbrug i tomgang:
