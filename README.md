@@ -4,13 +4,13 @@ Selv-hostet Canvas og Moodle til at udvikle og teste vores LTI 1.3- og API-integ
 
 ```
 .github/workflows/build-canvas.yml   bygger Canvas-imaget i GitHub Actions -> GHCR
-canvas/                              compose + ERB-config (læser hemmeligheder fra .env)
-moodle/                              compose (oksigenia/moodle + MariaDB)
-proxy/                               Caddy med automatisk HTTPS foran begge
 server/setup-server.sh               swap, volume-mount, Docker på volumet
+canvas.sh  + canvas/                 installerer Canvas, Postgres og Redis bag Traefik
+moodle.sh  + moodle/                 installerer Moodle og MariaDB bag Traefik
+lib/common.sh                        fælles kode til de to scripts
 ```
 
-Hemmeligheder ligger kun i `*/.env` på serveren (chmod 600, ignoreret af git). Repoet og imaget indeholder ingen.
+Scriptene kopierer compose-filerne til `<path>/canvas` og `<path>/moodle` på volumet og skriver `.env` med tilfældige kodeord dér (chmod 600). Domæner, e-mail, stier og hemmeligheder gives som flag på serveren og kommer aldrig i repoet eller imaget.
 
 ## 1. Byg Canvas-imaget
 
@@ -35,35 +35,38 @@ sudo ./server/setup-server.sh --volume <volumenavn> --swap 4G --docker-data-root
 - `RequiresMountsFor` sættes på `docker.service` (og `containerd.service`), så Docker aldrig starter på en tom mappe på systemdisken.
 - Et nyt, uformateret volume kræver `--format`. Et volume med data formateres aldrig.
 
-Firewall: kun 22, 80 og 443 skal være åbne. Appernes porte er bundet til `127.0.0.1`, fordi Docker-porte ellers går uden om ufw.
+Firewall: kun 22, 80 og 443 skal være åbne (Traefik). Stakkene publicerer ingen porte selv.
 
-## 3. Canvas
+## 3. Traefik
 
-```bash
-cd canvas
-./gen-secrets.sh ghcr.io/<ejer>/canvas-lms:latest canvas.example.com /mnt/<volumenavn> admin@example.com
-docker compose up -d postgres redis
-docker compose --profile setup run --rm setup     # skema, konto og admin (kun én gang)
-docker compose up -d web jobs
-```
+Begge stakke forventer en kørende Traefik med et eksternt docker-netværk. Der publiceres ingen porte på værten; routere sættes op via labels. Standardnavnene kan ændres med flag:
 
-Tag en sikkerhedskopi af `canvas/.env` et sikkert sted. `ENCRYPTION_KEY` må aldrig ændres, og uden den kan databasen ikke læses.
+| Flag | Standard |
+|---|---|
+| `--traefik-network` | `traefik` |
+| `--traefik-entrypoint` | `websecure` |
+| `--traefik-certresolver` | `letsencrypt` |
 
-LTI 1.3: Canvas signerer id_tokens med `CANVAS_LTI_JWK`, som indsættes via `config/dynamic_settings.yml` i stedet for Consul. Den offentlige nøgle kan hentes på `https://<canvas>/api/lti/security/jwks`. Developer keys oprettes som admin under Admin → Developer Keys.
+DNS for begge domæner skal pege på dropletten.
 
-## 4. Moodle
+## 4. Canvas og Moodle
 
-```bash
-cd moodle && cp .env.example .env && chmod 600 .env   # udfyld kodeord og MOODLE_URL
-docker compose up -d && docker compose logs -f moodle
-```
-
-## 5. HTTPS
+Klon repoet på serveren og kør som en bruger med sudo:
 
 ```bash
-cd proxy && cp .env.example .env    # udfyld domæner; DNS A-records skal pege på dropletten
-docker compose up -d
+sudo ./canvas.sh --domain=canvas.example.com --path=/mnt/<volume> --email=admin@example.com --owner=deploy
+sudo ./moodle.sh --domain=moodle.example.com --path=/mnt/<volume> --email=admin@example.com --owner=deploy
 ```
+
+- `--owner` er den linux-bruger, der ejer stakken og kører `docker compose` (skal være i docker-gruppen). Brugerens `docker login` bruges til at hente fra ghcr.io.
+- `canvas.sh` henter imaget, genererer hemmeligheder og LTI-nøglen, opsætter databasen første gang (ellers `db:migrate`) og starter web og jobs. Imaget er som standard `ghcr.io/<repo-ejer>/canvas-lms:latest`; brug `--image=` til et bestemt tag.
+- `moodle.sh` starter Moodle, som installerer sig selv ved første start (nogle minutter).
+- Opdatering: `git pull` og kør scriptet igen med samme flag. Kodeord og nøgler bevares.
+- `--help` viser alle flag.
+
+Tag en sikkerhedskopi af `<path>/canvas/.env`. `ENCRYPTION_KEY` må aldrig ændres, og uden den kan databasen ikke læses.
+
+LTI 1.3: Canvas signerer id_tokens med `CANVAS_LTI_JWK`, som indsættes via `config/dynamic_settings.yml` i stedet for Consul. Den offentlige nøgle ligger på `https://<canvas>/api/lti/security/jwks`. Developer keys oprettes som admin under Admin → Developer Keys.
 
 ## RAM
 
@@ -73,7 +76,7 @@ Begge LMS'er kan køre samtidig, når de bare leverer demodata gennem API'et. Om
 |---|---|
 | Canvas (1 Passenger-proces, jobs-worker, Postgres, Redis) | 2-2,5 GB |
 | Moodle (Apache/PHP, MariaDB) | 0,4-0,6 GB |
-| Caddy og OS | 0,3-0,4 GB |
+| Traefik og OS | 0,3-0,4 GB |
 
 Det er tæt på 4 GB, så swapfilen tager spidserne. Spidserne kommer især, når Canvas starter (asset-load) og ved tunge baggrundsjob. Hold øje med `free -h` og `docker stats --no-stream`. Hvis serveren swapper hele tiden, så stop den ene stak (`docker compose stop`) eller opgradér dropletten til 8 GB.
 

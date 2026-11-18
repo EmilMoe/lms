@@ -1,5 +1,5 @@
 # Erstatter Consul. Canvas signerer LTI 1.3-id_tokens med "lti-keys".
-# CANVAS_LTI_JWK er én privat RSA-JWK (JSON) i canvas/.env; gen-secrets.sh laver den.
+# CANVAS_LTI_JWK er én privat RSA-JWK (JSON) i .env; canvas.sh laver den.
 # Samme nøgle bruges som past/present/future med hver sit kid.
 <% require "json" %>
 <% jwk = JSON.parse(ENV.fetch("CANVAS_LTI_JWK")) %>

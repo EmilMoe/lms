@@ -1,12 +1,13 @@
-# Canvas LMS (prebuilt image fra GHCR) + Postgres + Redis.
-# Hemmeligheder ligger i canvas/.env på serveren (chmod 600, aldrig i git).
+# Canvas LMS (prebuilt image fra GHCR) + Postgres + Redis, bag Traefik.
+# Installeres og opdateres med ../canvas.sh, som kopierer denne mappe til
+# <path>/canvas og skriver .env (hemmeligheder, chmod 600, aldrig i git).
 #
-#   ./gen-secrets.sh                                # én gang: laver .env
-#   docker compose up -d postgres redis
+# Manuelt i <path>/canvas:
+#   docker compose up -d --wait postgres redis
 #   docker compose --profile setup run --rm setup   # én gang: database + admin
-#   docker compose up -d
+#   docker compose up -d web jobs
 #
-# Web lytter kun på 127.0.0.1:${CANVAS_PORT}; HTTPS ligger i proxy/ (Caddy).
+# Ingen porte på værten: Traefik når web via sit eksterne netværk.
 name: canvas
 
 x-logging: &logging
@@ -47,8 +48,8 @@ x-canvas: &canvas
     - ./config/delayed_jobs.yml:/usr/src/app/config/delayed_jobs.yml:ro
     - ./config/file_store.yml:/usr/src/app/config/file_store.yml:ro
     - ./config/dynamic_settings.yml:/usr/src/app/config/dynamic_settings.yml:ro
-    - ${DATA_DIR:?}/canvas/files:/usr/src/app/tmp/files   # ejes af uid 9999 (docker)
-    - ${DATA_DIR:?}/canvas/log:/usr/src/app/log
+    - ./data/files:/usr/src/app/tmp/files   # ejes af uid 9999 (docker)
+    - ./data/log:/usr/src/app/log
 
 services:
   postgres:
@@ -68,7 +69,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: canvas_production
     volumes:
-      - ${DATA_DIR:?}/canvas/postgres:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U canvas -d canvas_production"]
       interval: 10s
@@ -88,8 +89,15 @@ services:
 
   web:
     <<: *canvas
-    ports:
-      - "127.0.0.1:${CANVAS_PORT:-8000}:80"
+    networks: [default, traefik]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.canvas.rule: Host(`${CANVAS_DOMAIN:?}`)
+      traefik.http.routers.canvas.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.canvas.tls: "true"
+      traefik.http.routers.canvas.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.canvas.loadbalancer.server.port: "80"
 
   jobs:
     <<: *canvas
@@ -107,3 +115,8 @@ services:
       CANVAS_LMS_ADMIN_PASSWORD: ${CANVAS_ADMIN_PASSWORD:?}
       CANVAS_LMS_ACCOUNT_NAME: ${CANVAS_ACCOUNT_NAME:-Canvas test}
       CANVAS_LMS_STATS_COLLECTION: opt_out
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}

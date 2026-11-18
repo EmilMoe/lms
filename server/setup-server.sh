@@ -4,7 +4,6 @@
 #   2. DO-volume monteret permanent via /etc/fstab (UUID, nofail)
 #   3. docker.service starter først når volumet er monteret (RequiresMountsFor)
 #   4. valgfrit: flyt hele Docker (images, lag) til volumet via data-root
-#   5. datamapper til Canvas, Moodle og Caddy med rette ejere
 #
 # Brug (som root):
 #   ./setup-server.sh --volume <navn> [--swap 4G] [--docker-data-root] [--format]
@@ -26,7 +25,7 @@ while [[ $# -gt 0 ]]; do
     --swap) swap_size=$2; shift 2 ;;
     --docker-data-root) move_docker=1; shift ;;
     --format) allow_format=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "Ukendt argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -165,14 +164,6 @@ PY2
   fi
 fi
 # Uden flytning træder RequiresMountsFor i kraft ved næste genstart af Docker.
-
-# ---------------------------------------------------------------- 5. datamapper
-step "Datamapper i $mountpoint"
-mkdir -p "$mountpoint"/canvas/{postgres,files,log} \
-         "$mountpoint"/moodle/{db,moodle,moodledata} \
-         "$mountpoint"/caddy/{data,config}
-chown 9999:9999 "$mountpoint"/canvas/files "$mountpoint"/canvas/log   # "docker"-brugeren i Canvas-imaget
-# Postgres, MariaDB og Moodle (www-data, uid 33) retter selv ejerskab ved første start.
 
 step "Plads efter"
 df -h / "$mountpoint"

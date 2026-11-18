@@ -68,7 +68,22 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Bygger instructure/canvas-lms@$sha ($CANVAS_REF)"
 
+      # Byggeindstillinger (ikke kodeændringer): kør asset-tasks én ad gangen, så
+      # en fejl kan ses i loggen og RAM-toppene bliver mindre; spring dev-JS-bundles
+      # og API-docs over. Første kørsel med 4 parallelle tasks fejlede uden besked.
+      - name: Tilpas byggemiljø i Dockerfile.production
+        run: |
+          anchor='ENV COMPILE_ASSETS_NPM_INSTALL=0'
+          grep -qx "$anchor" Dockerfile.production || { echo "Fandt ikke '$anchor' i Dockerfile.production" >&2; exit 1; }
+          sed -i "/^${anchor}\$/a ENV CANVAS_BUILD_CONCURRENCY=1\nENV JS_BUILD_NO_FALLBACK=1\nENV COMPILE_ASSETS_API_DOCS=0\nENV NODE_OPTIONS=--max-old-space-size=8192" Dockerfile.production
+          grep -n -A5 "^${anchor}\$" Dockerfile.production
+
       - uses: docker/setup-buildx-action@v3
+        with:
+          # Ingen grænse på byggeloggen, så fejl fra lange trin ikke klippes væk.
+          driver-opts: |
+            env.BUILDKIT_STEP_LOG_MAX_SIZE=-1
+            env.BUILDKIT_STEP_LOG_MAX_SPEED=-1
 
       - uses: docker/login-action@v3
         with:
@@ -91,7 +106,7 @@ jobs:
           # AGPLv3: labels peger på den præcise, uændrede upstream-kilde.
           labels: |
             org.opencontainers.image.title=canvas-lms
-            org.opencontainers.image.description=Unmodified build of instructure/canvas-lms (Dockerfile.production)
+            org.opencontainers.image.description=Unmodified instructure/canvas-lms source, built with Dockerfile.production (build env tweaks only)
             org.opencontainers.image.source=https://github.com/instructure/canvas-lms
             org.opencontainers.image.revision=${{ steps.img.outputs.sha }}
             org.opencontainers.image.version=${{ inputs.canvas_ref }}

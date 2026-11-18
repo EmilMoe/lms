@@ -1,8 +1,11 @@
 # Moodle til test med oksigenia/moodle (vedligeholdt afløser for bitnami/moodle).
 # Variabelnavne og stier følger imagets egen README/compose.yaml (nov. 2026).
-# Hemmeligheder i moodle/.env (kopiér .env.example, chmod 600).
+# Installeres og opdateres med ../moodle.sh, som kopierer denne mappe til
+# <path>/moodle og skriver .env (hemmeligheder, chmod 600, aldrig i git).
 #
 #   docker compose up -d && docker compose logs -f moodle   # første start: nogle minutter
+#
+# Ingen porte på værten: Traefik når moodle via sit eksterne netværk.
 name: moodle
 
 x-logging: &logging
@@ -24,7 +27,7 @@ services:
       MARIADB_USER: moodle
       MARIADB_PASSWORD: ${MOODLE_DB_PASSWORD:?}
     volumes:
-      - ${DATA_DIR:?}/moodle/db:/var/lib/mysql
+      - ./data/db:/var/lib/mysql
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -38,10 +41,17 @@ services:
     logging: *logging
     depends_on:
       db: { condition: service_healthy }
-    ports:
-      - "127.0.0.1:${MOODLE_PORT:-8080}:8080"   # kun via Caddy (proxy/)
+    networks: [default, traefik]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.moodle.rule: Host(`${MOODLE_DOMAIN:?}`)
+      traefik.http.routers.moodle.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.moodle.tls: "true"
+      traefik.http.routers.moodle.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.moodle.loadbalancer.server.port: "8080"
     environment:
-      MOODLE_URL: ${MOODLE_URL:?}               # https://... bag Caddy slår sslproxy til automatisk
+      MOODLE_URL: https://${MOODLE_DOMAIN:?}    # https bag proxy slår sslproxy til automatisk
       MOODLE_DB_TYPE: mariadb
       MOODLE_DB_HOST: db
       MOODLE_DB_NAME: moodle
@@ -54,5 +64,10 @@ services:
       MOODLE_TIMEZONE: Europe/Copenhagen
       APACHE_MAX_REQUEST_WORKERS: "10"          # standard 50; begrænser RAM-spidser
     volumes:
-      - ${DATA_DIR:?}/moodle/moodle:/var/www/moodle
-      - ${DATA_DIR:?}/moodle/moodledata:/var/www/moodledata
+      - ./data/moodle:/var/www/moodle
+      - ./data/moodledata:/var/www/moodledata
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}
