@@ -109,7 +109,7 @@ else
 fi
 
 step "Starter Canvas"
-as_owner docker compose up -d --remove-orphans web jobs
+as_owner docker compose up -d --remove-orphans --force-recreate web jobs   # config/ er nye filer; uden recreate ser containerne de gamle
 
 cat <<EOF
 
