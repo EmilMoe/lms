@@ -103,7 +103,22 @@ Importen kan køres igen. Canvas opdaterer rækkerne ud fra deres ID (`user_id`,
 
 **REST-API** til alt andet (opgaver, afleveringer, karakterer): opret en token under Account → Settings → **+ New Access Token** og brug fx `POST /api/v1/courses/:id/assignments`.
 
-### Canvas Data 2-mock (kursusadgang)
+### Moodle
+
+**Indbygget generator** til kurser med aktiviteter, brugere og forum-indlæg (størrelse XS-XXL):
+
+```bash
+cd <path>/moodle && sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST1 --size=S
+```
+
+Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
+
+**CSV-upload** af datasættet i `testdata/moodle/`, i denne rækkefølge:
+
+1. Site administration → Courses → Upload courses → `courses.csv`. Kurserne lægges i kategori 1.
+2. Site administration → Users → Upload users → `users.csv`. Brugerne får `auth=nologin` og tilmeldes kurserne via `course1`/`role1`.
+
+## 6. Canvas Data 2-mock (kursusadgang)
 
 Canvas Data 2 (DAP), som Nexus henter Course Access og Course Access Log fra, er en hostet Instructure-tjeneste. Den findes ikke i open source-Canvas. `canvas.sh` starter derfor en lille mock (`canvas/dap-mock/`), der svarer som Canvas Data 2 på `https://<canvas-domæne>/cd2`:
 
@@ -130,21 +145,6 @@ Indstillinger i `<path>/canvas/.env` (bevares ved opdatering, genstart med `dock
 | `DAP_MOCK_SYNTHETIC_WEB_LOGS` | `true` | `false` giver kun Canvas' egne `page_views` |
 
 Mocken laver kun den normale vej: ingen throttling, ventende jobs eller andre fejl end "ingen nye data" og "for langt tilbage" (over 30 dage). Logs: `docker compose logs -f dap-mock`.
-
-### Moodle
-
-**Indbygget generator** til kurser med aktiviteter, brugere og forum-indlæg (størrelse XS-XXL):
-
-```bash
-cd <path>/moodle && sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST1 --size=S
-```
-
-Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
-
-**CSV-upload** af datasættet i `testdata/moodle/`, i denne rækkefølge:
-
-1. Site administration → Courses → Upload courses → `courses.csv`. Kurserne lægges i kategori 1.
-2. Site administration → Users → Upload users → `users.csv`. Brugerne får `auth=nologin` og tilmeldes kurserne via `course1`/`role1`.
 
 ## RAM
 
