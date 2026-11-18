@@ -123,7 +123,23 @@ Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion
 Canvas Data 2 (DAP), som Nexus henter Course Access og Course Access Log fra, er en hostet Instructure-tjeneste. Den findes ikke i open source-Canvas. `canvas.sh` starter derfor en lille mock (`canvas/dap-mock/`), der svarer som Canvas Data 2 på `https://<canvas-domæne>/cd2`:
 
 - `canvas.enrollment_terms`, `courses`, `enrollments` og `roles` læses direkte (skrivebeskyttet) fra Canvas' database, med de samme id'er som REST-API'et.
-- `canvas_logs.web_logs` bygges af Canvas' `page_views` (hvis de gemmes i databasen) plus genererede besøg for aktive tilmeldinger i publicerede kurser de seneste 30 dage: browser, Canvas-app og lidt API-trafik, flest på hverdage i dagtimerne. Besøgene er faste pr. bruger, kursus og dag, så et nyt snapshot giver de samme data, og incremental-kald giver kun det nye.
+- `canvas_logs.web_logs` (besøg) har open source-Canvas ikke. Mocken fører sin egen besøgslog i `<path>/canvas/data/dap-mock/web_logs.sqlite`, som kun vokser.
+
+**Sådan opstår besøgene:**
+
+- Ved hver forespørgsel skriver mocken besøg for tiden siden sidst og frem til nu. Det, der er skrevet, ændres aldrig, og der kommer aldrig besøg efter nu. Når Nexus synkroniserer dagligt, kommer der altså en dags nye besøg til hver gang.
+- Besøgene hører til de faktiske kurser og personer i Canvas. Der kommer kun besøg, når
+  - tilmeldingen er aktiv (elev, lærer eller TA), og kurset er publiceret,
+  - tidspunktet ligger inden for kursets datoer (eller termens, hvis kurset ikke har nogen) og tilmeldingens egne datoer, når de er sat,
+  - og tilmeldingen fandtes på tidspunktet.
+- En ny tilmelding får besøg fra det tidspunkt, den blev oprettet. En slettet tilmelding får ikke flere besøg, men beholder de gamle.
+- Hver person har en fast profil pr. kursus: hvor aktiv, hvornår på døgnet, hvor meget på mobilappen og i weekenden. Lærere er mest inde i arbejdstiden, elever også om aftenen. Trafikken er en blanding af browser, Canvas-app og lidt API, med enkelte POST-kald og fejlsvar, som Nexus sorterer fra.
+- Første gang fyldes 30 dage bagud, så der er noget at se med det samme. Tilmeldinger, der fandtes, da mocken startede, regnes som en del af et igangværende semester og får hele perioden, selv om de er importeret for nylig.
+- Canvas' egne `page_views` kommer med, hvis Canvas gemmer dem i databasen.
+
+**Som den rigtige Canvas Data 2:** Et snapshot giver besøgene fra de seneste 30 dage. Et incremental-kald (`since`) giver det, der er skrevet siden, og et `since` over 30 dage tilbage afvises, så Nexus må tage et nyt snapshot. Nexus beholder selv alt, den har hentet.
+
+**Start forfra:** Stop mocken, slet `data/dap-mock/web_logs.sqlite` og start den igen. Så fyldes 30 dage bagud på ny.
 
 **Sådan bruges den fra Nexus:**
 
@@ -135,7 +151,7 @@ Canvas Data 2 (DAP), som Nexus henter Course Access og Course Access Log fra, er
    ```
 
 3. Indtast dem på Canvas-forbindelsens Canvas Data 2-fane i Nexus og test forbindelsen. Regionen bliver `eu-west-1`, men det er ligegyldigt for mocken.
-4. Kør sync som normalt. Course Access og Course Access Log fyldes med de seneste 30 dage.
+4. Kør sync som normalt. Første sync giver de seneste 30 dage, og hver sync derefter lægger de nye besøg til.
 
 Indstillinger i `<path>/canvas/.env` (bevares ved opdatering, genstart med `docker compose up -d dap-mock`):
 
@@ -143,8 +159,11 @@ Indstillinger i `<path>/canvas/.env` (bevares ved opdatering, genstart med `dock
 |---|---|---|
 | `DAP_MOCK_COURSE_ACCESS` | `true` | `false` svarer til en rigtig nøgle uden web logs, så Nexus' "without course access"-vej kan testes |
 | `DAP_MOCK_SYNTHETIC_WEB_LOGS` | `true` | `false` giver kun Canvas' egne `page_views` |
+| `DAP_MOCK_BACKFILL_DAYS` | `30` | dage der fyldes bagud første gang |
+| `DAP_MOCK_RETENTION_DAYS` | `30` | hvor langt et snapshot og `since` går tilbage (30 som Canvas Data 2) |
+| `DAP_MOCK_REFRESH_HOURS` | `0` | fx `4`: data kun op til seneste opdatering hver 4. time, som Canvas Data 2. `0` = altid til nu |
 
-Mocken laver kun den normale vej: ingen throttling, ventende jobs eller andre fejl end "ingen nye data" og "for langt tilbage" (over 30 dage). Logs: `docker compose logs -f dap-mock`.
+Mocken laver kun den normale vej: ingen throttling, ventende jobs eller andre fejl end "ingen nye data" og "for langt tilbage". Logs: `docker compose logs -f dap-mock`.
 
 ## RAM
 

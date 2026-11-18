@@ -104,7 +104,8 @@ services:
     command: ["bundle", "exec", "script/delayed_job", "run"]
 
   # Mock af Canvas Data 2 (DAP), som open source-Canvas ikke har. Læser Canvas' database
-  # (skrivebeskyttet) og svarer på https://<CANVAS_DOMAIN>/cd2/... Se dap-mock/app.py.
+  # (skrivebeskyttet), fører sin egen besøgslog i data/dap-mock og svarer på
+  # https://<CANVAS_DOMAIN>/cd2/... Se dap-mock/app.py.
   dap-mock:
     build: ./dap-mock
     image: canvas-dap-mock:local
@@ -123,6 +124,11 @@ services:
       DAP_CLIENT_SECRET: ${DAP_MOCK_CLIENT_SECRET:?}
       DAP_COURSE_ACCESS: ${DAP_MOCK_COURSE_ACCESS:-true}
       DAP_SYNTHETIC_WEB_LOGS: ${DAP_MOCK_SYNTHETIC_WEB_LOGS:-true}
+      DAP_BACKFILL_DAYS: ${DAP_MOCK_BACKFILL_DAYS:-30}
+      DAP_RETENTION_DAYS: ${DAP_MOCK_RETENTION_DAYS:-30}
+      DAP_REFRESH_HOURS: ${DAP_MOCK_REFRESH_HOURS:-0}
+    volumes:
+      - ./data/dap-mock:/data   # mockens egen besøgslog (web_logs.sqlite); ejes af uid 10001
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s

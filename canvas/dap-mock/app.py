@@ -13,16 +13,19 @@ svarer som DAP på de kald, en klient som Nexus bruger, med data fra test-Canvas
 canvas.enrollment_terms, courses, enrollments og roles læses direkte fra Canvas' tabeller (DAP's
 canvas-namespace er næsten 1:1 med Canvas' database, med de samme id'er som REST-API'et).
 
-canvas_logs.web_logs har open source-Canvas ikke. De bygges af Canvas' page_views (hvis de gemmes i
-databasen) plus genererede besøg for de aktive tilmeldinger i publicerede kurser de seneste 30 dage:
-faste pr. bruger, kursus og dag, så et nyt snapshot giver de samme besøg, og incremental-forespørgsler
-giver præcis det nye siden sidst.
+canvas_logs.web_logs har open source-Canvas ikke. Mocken fører sin egen log (SQLite under DAP_DATA_DIR),
+der kun vokser: ved hver forespørgsel skrives besøg for tiden siden sidst, for de aktive tilmeldinger i
+publicerede kurser inden for kursets/termens datoer, plus Canvas' egne page_views, hvis de gemmes i
+databasen. Det skrevne ændres aldrig, og intet ligger efter nu. Se WebLogStore.
 
 Konfiguration (miljøvariabler):
   DAP_CLIENT_ID, DAP_CLIENT_SECRET   det klienten logger ind med
   DAP_PUBLIC_URL                     den offentlige rod-URL, fx https://canvas.example.com/cd2
   DAP_COURSE_ACCESS                  true/false: om klienten må læse canvas_logs (som en rigtig nøgle med/uden web logs)
   DAP_SYNTHETIC_WEB_LOGS             true/false: generér besøg ud over page_views
+  DAP_BACKFILL_DAYS                  dage der fyldes bagud første gang (30)
+  DAP_RETENTION_DAYS                 dage et snapshot går tilbage, og hvor langt "since" må gå tilbage (30, som DAP)
+  DAP_REFRESH_HOURS                  >0: data kun op til seneste opdatering hver N timer, som DAP (~4); 0 = altid nu
   PGHOST, PGDATABASE, PGUSER, PGPASSWORD
 """
 
@@ -35,6 +38,8 @@ import os
 import random
 import re
 import secrets
+import sqlite3
+import threading
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -51,14 +56,18 @@ CLIENT_SECRET = os.environ["DAP_CLIENT_SECRET"]
 PUBLIC_URL = os.environ["DAP_PUBLIC_URL"].rstrip("/")
 COURSE_ACCESS = os.environ.get("DAP_COURSE_ACCESS", "true").lower() == "true"
 SYNTHETIC = os.environ.get("DAP_SYNTHETIC_WEB_LOGS", "true").lower() == "true"
+BACKFILL_DAYS = int(os.environ.get("DAP_BACKFILL_DAYS", "30"))
+RETENTION_DAYS = int(os.environ.get("DAP_RETENTION_DAYS", "30"))
+REFRESH_HOURS = int(os.environ.get("DAP_REFRESH_HOURS", "0"))
+CANVAS_DOMAIN = os.environ.get("CANVAS_DOMAIN", "canvas.local")
 DATA_DIR = Path(os.environ.get("DAP_DATA_DIR", "/data"))
+JOB_DIR = DATA_DIR / "jobs"
 PORT = int(os.environ.get("PORT", "8080"))
 
 # Tokens og download-links signeres med en nøgle afledt af hemmeligheden, så de overlever en genstart.
 SIGNING_KEY = hashlib.sha256(f"dap-mock:{CLIENT_SECRET}".encode()).digest()
 TOKEN_SECONDS = 3600
 URL_SECONDS = 900
-WEB_LOG_RETENTION = timedelta(days=30)
 
 TABLES = {
     "canvas": ["enrollment_terms", "courses", "enrollments", "roles"],
@@ -159,7 +168,18 @@ def canvas_records(table: str, since: datetime | None, until: datetime):
             yield {"key": key, "value": value, "meta": {"action": "U", "ts": iso(row.get("updated_at") or until)}}
 
 
-# --- canvas_logs.web_logs ----------------------------------------------------------------------
+# --- canvas_logs.web_logs: et logbaseret lager, der kun vokser ---------------------------------
+#
+# Besøgene gemmes i mockens egen SQLite (DATA_DIR/web_logs.sqlite), aldrig i Canvas' database. Hver
+# forespørgsel fører lageret frem til "nu": der skrives besøg for tiden siden sidst, ud fra Canvas'
+# tilmeldinger, som de er nu. Det skrevne ændres aldrig, så historikken står fast: en slettet
+# tilmelding beholder sine gamle besøg, en ny får besøg fra den blev oprettet, og intet ligger efter nu.
+#
+# Første gang fyldes BACKFILL_DAYS bagud, så der er noget at se. Tilmeldinger, der fandtes før mocken
+# startede, regnes som en del af et igangværende semester; derefter tæller tilmeldingens created_at.
+#
+# Hver besøg har et written_at (hvornår mocken skrev det). Incremental-forespørgsler filtrerer på det,
+# som DAP filtrerer på ændringstidspunkt, så snapshot og incremental altid er enige.
 
 BROWSERS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -175,8 +195,11 @@ APPS = [
 ]
 OTHER = ["python-requests/2.32.3", "curl/8.7.1"]
 
-# Relative vægte for timer i døgnet (UTC; Danmark er UTC+1 om vinteren).
-HOUR_WEIGHTS = [0.2, 0.1, 0.05, 0.05, 0.05, 0.2, 0.8, 2.5, 4, 4.5, 4, 3, 2.5, 3.5, 3.5, 3, 2.5, 2, 2.5, 3, 3.5, 2.5, 1.2, 0.5]
+# Relative vægte for timer i døgnet (UTC; Danmark er UTC+1 om vinteren). Elever spreder sig ud på
+# aftenen, lærere er mest inde i arbejdstiden.
+STUDENT_HOURS = [0.2, 0.1, 0.05, 0.05, 0.05, 0.2, 0.8, 2.5, 4, 4.5, 4, 3, 2.5, 3.5, 3.5, 3, 2.5, 2, 2.5, 3, 3.5, 2.5, 1.2, 0.5]
+TEACHER_HOURS = [0.05, 0, 0, 0, 0, 0.1, 1, 3, 5, 5, 4.5, 3.5, 3, 4, 4, 3.5, 2.5, 1.5, 1, 1.2, 1.5, 1, 0.4, 0.1]
+TEACHER_TYPES = ("TeacherEnrollment", "TaEnrollment")
 
 WEB_PATHS = [
     "/courses/{c}", "/courses/{c}/modules", "/courses/{c}/assignments", "/courses/{c}/assignments/{n}",
@@ -189,29 +212,29 @@ API_PATHS = [
 ]
 
 
-def profile(user_id: int, course_id: int, enrollment_type: str) -> dict:
+def profile(user_id: int, course_id: int, teacher: bool) -> dict:
     """En fast "personlighed" pr. bruger og kursus: hvor aktiv, hvornår på dagen og hvor meget på mobil."""
     rng = random.Random(f"profile:{user_id}:{course_id}")
-    teacher = enrollment_type in ("TeacherEnrollment", "TaEnrollment", "DesignerEnrollment")
-    engagement = rng.choice([0.08, 0.25, 0.45, 0.6, 0.75, 0.9]) if not teacher else rng.uniform(0.55, 0.9)
     return {
-        "engagement": engagement,
-        "shift": rng.choice([-3, -1, 0, 0, 1, 3]),  # morgen- eller aftenmenneske
-        "mobile": rng.choice([0.0, 0.1, 0.25, 0.45]),
-        "weekend": rng.uniform(0.2, 0.7),
+        "engagement": rng.uniform(0.6, 0.9) if teacher else rng.choice([0.08, 0.25, 0.45, 0.6, 0.75, 0.9]),
+        "shift": 0 if teacher else rng.choice([-3, -1, 0, 0, 1, 3]),  # morgen- eller aftenmenneske
+        "mobile": rng.choice([0.0, 0.05, 0.1]) if teacher else rng.choice([0.0, 0.1, 0.25, 0.45]),
+        "weekend": rng.uniform(0.05, 0.25) if teacher else rng.uniform(0.2, 0.7),
     }
 
 
-def synthetic_day(enrollment: dict, day: date):
-    user_id, course_id = enrollment["user_id"], enrollment["course_id"]
-    p = profile(user_id, course_id, enrollment["type"])
+def synthetic_day(user_id: int, course_id: int, teacher: bool, day: date):
+    """Brugerens besøg i kurset den dag. Fast for (bruger, kursus, dag), så en dag, der skrives i to
+    omgange (før og efter et tick), fortsætter med de samme sessioner."""
+    p = profile(user_id, course_id, teacher)
     rng = random.Random(f"day:{user_id}:{course_id}:{day.isoformat()}")
-    chance = p["engagement"] * (p["weekend"] if day.weekday() >= 5 else 1.0)
-    if rng.random() >= chance:
+    if rng.random() >= p["engagement"] * (p["weekend"] if day.weekday() >= 5 else 1.0):
         return
-    weights = HOUR_WEIGHTS[-p["shift"]:] + HOUR_WEIGHTS[:-p["shift"]] if p["shift"] else HOUR_WEIGHTS
+    hours = TEACHER_HOURS if teacher else STUDENT_HOURS
+    if p["shift"]:
+        hours = hours[-p["shift"]:] + hours[:-p["shift"]]
     for session_no in range(rng.choice([1, 1, 1, 2, 2, 3])):
-        hour = rng.choices(range(24), weights)[0]
+        hour = rng.choices(range(24), hours)[0]
         at = datetime(day.year, day.month, day.day, hour, rng.randrange(60), rng.randrange(60), tzinfo=timezone.utc)
         roll = rng.random()
         if roll < 0.03:
@@ -221,81 +244,165 @@ def synthetic_day(enrollment: dict, day: date):
         else:
             agent, paths = rng.choice(BROWSERS), WEB_PATHS
         session = str(uuid.UUID(int=rng.getrandbits(128)))
-        for request_no in range(rng.randint(2, 14)):
+        for _ in range(rng.randint(2, 14)):
             method = "POST" if rng.random() < 0.07 else "GET"
             status = rng.choices([200, 302, 304, 404, 401], [88, 4, 5, 2, 1])[0]
             url = rng.choice(paths).format(c=course_id, n=rng.randint(1, 12))
             request_id = str(uuid.UUID(int=rng.getrandbits(128)))
-            yield {
-                "key": {"id": request_id},
-                "value": {
-                    "timestamp": iso(at),
-                    "user_id": user_id,
-                    "course_id": course_id,
-                    "context_type": "Course",
-                    "context_id": course_id,
-                    "http_method": method,
-                    "http_status": status,
-                    "url": f"https://{os.environ.get('CANVAS_DOMAIN', 'canvas.local')}{url}",
-                    "user_agent": agent,
-                    "session_id": session,
-                    "request_id": request_id,
-                    "remote_ip": f"10.{(user_id >> 8) & 255}.{user_id & 255}.{session_no + 1}",
-                    "controller": "courses",
-                    "action": "show",
-                    "participated": method == "POST",
-                    "interaction_seconds": rng.randint(5, 600),
-                },
-                "meta": {"action": "U", "ts": iso(at)},
+            yield at, {
+                "request_id": request_id,
+                "timestamp": iso(at),
+                "user_id": user_id,
+                "course_id": course_id,
+                "context_type": "Course",
+                "context_id": course_id,
+                "http_method": method,
+                "http_status": status,
+                "url": f"https://{CANVAS_DOMAIN}{url}",
+                "user_agent": agent,
+                "session_id": session,
+                "remote_ip": f"10.{(user_id >> 8) & 255}.{user_id & 255}.{session_no + 1}",
+                "controller": "courses",
+                "action": "show",
+                "participated": method == "POST",
+                "interaction_seconds": rng.randint(5, 600),
             }
             at += timedelta(seconds=rng.randint(15, 240))
 
 
-def web_log_records(since: datetime, until: datetime):
-    """Besøg med tidsstempel i (since, until]."""
-    with db() as conn:
-        if conn.execute("select to_regclass('public.page_views') is not null as ok").fetchone()["ok"]:
-            rows = conn.execute(
-                """select * from page_views
-                   where context_type = 'Course' and created_at > %s and created_at <= %s
-                   order by created_at""",
-                [since.replace(tzinfo=None), until.replace(tzinfo=None)],
+def aware(value) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def active_window(row: dict, start: datetime, end: datetime, started_at: datetime) -> tuple[datetime, datetime]:
+    """Den del af (start, end], hvor tilmeldingen kunne give besøg: inden for kursets (ellers termens)
+    og tilmeldingens datoer, og efter tilmeldingen blev oprettet, hvis det var efter mocken startede."""
+    lo, hi = start, end
+    for bound in (aware(row["course_start"] or row["term_start"]), aware(row.get("start_at"))):
+        if bound:
+            lo = max(lo, bound)
+    created = aware(row.get("created_at"))
+    if created and created > started_at:
+        lo = max(lo, created)
+    for bound in (aware(row["course_end"] or row["term_end"]), aware(row.get("end_at"))):
+        if bound:
+            hi = min(hi, bound)
+    return lo, hi
+
+
+class WebLogStore:
+    def __init__(self, path: Path):
+        self.path = path
+        self.lock = threading.Lock()
+        with self.connect() as conn:
+            conn.executescript(
+                """
+                pragma journal_mode = wal;
+                create table if not exists web_logs (
+                    id text primary key, ts text not null, written_at text not null,
+                    user_id integer, course_id integer, value text not null);
+                create index if not exists web_logs_ts on web_logs (ts);
+                create index if not exists web_logs_written_at on web_logs (written_at);
+                create table if not exists state (key text primary key, value text not null);
+                """
             )
-            keep = ("session_id", "user_id", "url", "user_agent", "http_method", "remote_ip",
-                    "controller", "action", "participated", "interaction_seconds")
-            for row in rows:
-                yield {
-                    "key": {"id": row["request_id"]},
-                    "value": {
-                        **{k: jsonable(row[k]) for k in keep if k in row},
-                        "request_id": row["request_id"],
-                        "timestamp": iso(row["created_at"]),
-                        "course_id": row["context_id"],
-                        "context_type": "Course",
-                        "http_status": 200,
-                    },
-                    "meta": {"action": "U", "ts": iso(row["created_at"])},
-                }
 
-        if not SYNTHETIC:
-            return
+    def connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.path, timeout=30)
 
-        enrollments = conn.execute(
-            """select e.user_id, e.course_id, e.type
-               from enrollments e join courses c on c.id = e.course_id
+    def state(self, conn, key: str) -> datetime | None:
+        row = conn.execute("select value from state where key = ?", (key,)).fetchone()
+        return parse_iso(row[0]) if row else None
+
+    def advance(self, until: datetime) -> None:
+        """Skriver besøgene fra sidst lageret blev ført frem og til `until`."""
+        with self.lock, self.connect() as conn:
+            started_at = self.state(conn, "started_at")
+            start = self.state(conn, "generated_until")
+            if start is None:
+                started_at, start = until, until - timedelta(days=BACKFILL_DAYS)
+                conn.execute("insert or replace into state values ('started_at', ?)", (iso(started_at),))
+            if until <= start:
+                return
+
+            written_at = iso(until)
+            rows = []
+            with db() as pg:
+                if SYNTHETIC:
+                    rows += self.synthetic(pg, start, until, started_at, written_at)
+                rows += self.page_views(pg, start, until, written_at)
+
+            conn.executemany("insert or ignore into web_logs values (?, ?, ?, ?, ?, ?)", rows)
+            conn.execute("insert or replace into state values ('generated_until', ?)", (iso(until),))
+            print(f"web logs: wrote {len(rows)} visits for {iso(start)} - {iso(until)}", flush=True)
+
+    @staticmethod
+    def synthetic(pg, start: datetime, until: datetime, started_at: datetime, written_at: str) -> list:
+        enrollments = pg.execute(
+            """select e.*, c.start_at as course_start, c.conclude_at as course_end,
+                      t.start_at as term_start, t.end_at as term_end
+               from enrollments e
+               join courses c on c.id = e.course_id
+               left join enrollment_terms t on t.id = c.enrollment_term_id
                where e.workflow_state = 'active' and c.workflow_state = 'available'
-                 and e.type in ('StudentEnrollment', 'TeacherEnrollment', 'TaEnrollment')
-               group by e.user_id, e.course_id, e.type
-               order by e.course_id, e.user_id"""
+                 and e.type in ('StudentEnrollment', 'TeacherEnrollment', 'TaEnrollment')"""
         ).fetchall()
 
-    day = since.date()
-    while day <= until.date():
-        for enrollment in enrollments:
-            for record in synthetic_day(enrollment, day):
-                if since < parse_iso(record["value"]["timestamp"]) <= until:
-                    yield record
-        day += timedelta(days=1)
+        rows = []
+        for row in enrollments:
+            lo, hi = active_window(row, start, until, started_at)
+            day = lo.date()
+            while lo < hi and day <= hi.date():
+                for at, value in synthetic_day(row["user_id"], row["course_id"], row["type"] in TEACHER_TYPES, day):
+                    if lo < at <= hi:
+                        rows.append((value["request_id"], value["timestamp"], written_at, value["user_id"], value["course_id"], json.dumps(value)))
+                day += timedelta(days=1)
+        return rows
+
+    @staticmethod
+    def page_views(pg, start: datetime, until: datetime, written_at: str) -> list:
+        """Canvas' egne page views, hvis de gemmes i databasen. Canvas skriver dem lidt forsinket, så der
+        kigges en time ekstra tilbage; dem, der allerede er skrevet, springes over."""
+        if not pg.execute("select to_regclass('public.page_views') is not null as ok").fetchone()["ok"]:
+            return []
+        keep = ("session_id", "user_id", "url", "user_agent", "http_method", "remote_ip",
+                "controller", "action", "participated", "interaction_seconds")
+        rows = []
+        for row in pg.execute(
+            "select * from page_views where context_type = 'Course' and created_at > %s and created_at <= %s",
+            [(start - timedelta(hours=1)).replace(tzinfo=None), until.replace(tzinfo=None)],
+        ):
+            value = {k: jsonable(row[k]) for k in keep if k in row}
+            value.update(request_id=row["request_id"], timestamp=iso(row["created_at"]), course_id=row["context_id"],
+                         context_id=row["context_id"], context_type="Course", http_status=200)
+            rows.append((row["request_id"], value["timestamp"], written_at, row["user_id"], row["context_id"], json.dumps(value)))
+        return rows
+
+    def records(self, since: datetime | None, until: datetime):
+        """Snapshot: besøg fra de seneste RETENTION_DAYS. Incremental: det, der er skrevet i (since, until]."""
+        with self.connect() as conn:
+            if since is None:
+                query = ("select id, written_at, value from web_logs where ts > ? and ts <= ? order by ts",
+                         (iso(until - timedelta(days=RETENTION_DAYS)), iso(until)))
+            else:
+                query = ("select id, written_at, value from web_logs where written_at > ? and written_at <= ? order by ts",
+                         (iso(since), iso(until)))
+            for record_id, written, value in conn.execute(*query):
+                yield {"key": {"id": record_id}, "value": json.loads(value), "meta": {"action": "U", "ts": written}}
+
+
+STORE: WebLogStore | None = None
+
+
+def data_now() -> datetime:
+    """Det tidspunkt, data er opdateret til. Med REFRESH_HOURS som DAP: kun op til seneste opdatering."""
+    current = now()
+    if REFRESH_HOURS <= 0:
+        return current
+    step = REFRESH_HOURS * 3600
+    return datetime.fromtimestamp(int(current.timestamp()) // step * step, timezone.utc)
 
 
 # --- Jobs og filer ----------------------------------------------------------------------------
@@ -315,20 +422,25 @@ def run_query(namespace: str, table: str, body: dict) -> dict:
     if body.get("format", "jsonl") != "jsonl":
         raise ApiError(400, "ValidationError", "Only the jsonl format is supported by this mock.")
 
-    until = now()
     since = parse_iso(body["since"]) if body.get("since") else None
 
     if namespace == "canvas_logs":
-        if since is not None and since < until - WEB_LOG_RETENTION:
+        until = data_now()
+        if since is not None and since < until - timedelta(days=RETENTION_DAYS):
             raise ApiError(400, "SnapshotRequiredError", f"since {iso(since)} is outside the retention range; take a new snapshot.")
-        records = web_log_records(since or until - WEB_LOG_RETENTION, until)
+        STORE.advance(until)
+        records = STORE.records(since, until)
     else:
+        until = now()
         records = canvas_records(table, since, until)
+
+    if since is not None and since >= until:
+        raise ApiError(400, "ValidationError", f"No data since {iso(since)} in {namespace}.{table}.")
 
     cleanup()
     job_id = str(uuid.uuid4())
     object_id = f"{job_id}/part-00000-{secrets.token_hex(4)}.json.gz"
-    path = DATA_DIR / f"{job_id}.json.gz"
+    path = JOB_DIR / f"{job_id}.json.gz"
     count = 0
     with gzip.open(path, "wt", encoding="utf-8") as out:
         for record in records:
@@ -493,9 +605,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for stale in DATA_DIR.glob("*.json.gz"):
+    JOB_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in JOB_DIR.glob("*.json.gz"):
         stale.unlink(missing_ok=True)
+    STORE = WebLogStore(DATA_DIR / "web_logs.sqlite")
     print(f"dap-mock on :{PORT}, public URL {PUBLIC_URL}, course access {'on' if COURSE_ACCESS else 'off'}, "
-          f"synthetic web logs {'on' if SYNTHETIC else 'off'}", flush=True)
+          f"synthetic web logs {'on' if SYNTHETIC else 'off'}, backfill {BACKFILL_DAYS} d, retention {RETENTION_DAYS} d, "
+          f"refresh {f'every {REFRESH_HOURS} h' if REFRESH_HOURS > 0 else 'live'}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

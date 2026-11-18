@@ -54,8 +54,9 @@ as_owner docker pull "$IMAGE" || die "kunne ikke hente $IMAGE.
 
 step "Installerer stakken i $stack"
 install_stack "$REPO_DIR/canvas" "$stack"
-mkdir -p "$stack"/data/{postgres,files,log}
+mkdir -p "$stack"/data/{postgres,files,log,dap-mock}
 chown 9999:9999 "$stack/data/files" "$stack/data/log"   # "docker"-brugeren i Canvas-imaget
+chown 10001:10001 "$stack/data/dap-mock"              # "dap"-brugeren i dap-mock-imaget
 
 step "Skriver .env"
 secret() {   # bevar eksisterende hemmelighed, ellers generér
@@ -71,9 +72,8 @@ if [[ -z $jwk_line ]]; then
   [[ $jwk == \{*\"kty\":\"RSA\"* ]] || die "uventet JWK-output: $jwk"
   jwk_line="CANVAS_LTI_JWK='$jwk'"
 fi
-# Canvas Data 2-mock: kan slås fra/til i .env (bevares ved opdatering).
-dap_course_access=$(env_value "$env_file" DAP_MOCK_COURSE_ACCESS)
-dap_synthetic=$(env_value "$env_file" DAP_MOCK_SYNTHETIC_WEB_LOGS)
+# Canvas Data 2-mockens indstillinger: standard, eller den værdi der står i .env (bevares ved opdatering).
+dap_setting() { local v; v=$(env_value "$env_file" "$1"); echo "$1=${v:-$2}"; }
 [[ -f $env_file ]] && cp -p "$env_file" "$env_file.bak"
 write_env "$env_file" <<EOF
 # Skrevet af canvas.sh. Indstillinger overskrives ved næste kørsel; hemmeligheder bevares.
@@ -86,9 +86,12 @@ PASSENGER_MAX_POOL_SIZE=1
 CANVAS_ADMIN_EMAIL=$EMAIL
 CANVAS_ACCOUNT_NAME=Canvas test
 $(traefik_env)
-# Canvas Data 2-mock (https://$DOMAIN/cd2): false = nøgle uden web logs / kun page_views
-DAP_MOCK_COURSE_ACCESS=${dap_course_access:-true}
-DAP_MOCK_SYNTHETIC_WEB_LOGS=${dap_synthetic:-true}
+# Canvas Data 2-mock (https://$DOMAIN/cd2). Se README, afsnit 6.
+$(dap_setting DAP_MOCK_COURSE_ACCESS true)
+$(dap_setting DAP_MOCK_SYNTHETIC_WEB_LOGS true)
+$(dap_setting DAP_MOCK_BACKFILL_DAYS 30)
+$(dap_setting DAP_MOCK_RETENTION_DAYS 30)
+$(dap_setting DAP_MOCK_REFRESH_HOURS 0)
 
 $(secret POSTGRES_PASSWORD "$(rand 24)")
 $(secret ENCRYPTION_KEY "$(rand 32)")
