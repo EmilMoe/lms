@@ -44,8 +44,8 @@ validate_common
 stack="$DATA_PATH/canvas"
 env_file="$stack/.env"
 
-step "Henter $IMAGE"
-as_owner docker pull -q "$IMAGE" >/dev/null || die "kunne ikke hente $IMAGE.
+step "Henter $IMAGE (flere GB første gang; senere kun ændrede lag)"
+as_owner docker pull "$IMAGE" || die "kunne ikke hente $IMAGE.
   Gør pakken offentlig på GitHub, eller log ind som $OWNER:
   echo \$PAT | docker login ghcr.io -u <github-bruger> --password-stdin   (PAT med read:packages)"
 

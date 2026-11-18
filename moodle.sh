@@ -63,7 +63,7 @@ fi
 
 cd "$stack"
 step "Starter Moodle"
-as_owner docker compose pull -q
+as_owner docker compose pull
 as_owner docker compose up -d --remove-orphans
 
 cat <<EOF
