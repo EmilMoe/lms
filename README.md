@@ -15,9 +15,9 @@ Scriptene kopierer compose-filerne til `<path>/canvas` og `<path>/moodle` på vo
 
 ## 1. Byg Canvas-imaget
 
-Kør workflowet under Actions → "Build Canvas LMS image". `canvas_ref` er `prod` som standard; brug alternativt en `stable/ÅÅÅÅ-MM-DD`-branch. Buildet tager 1-2 timer.
+Kør workflowet under Actions → "Build Canvas LMS image". `canvas_ref` er `stable/2026-05-20` som standard; en nyere `stable/ÅÅÅÅ-MM-DD`-branch kan angives. `prod` kan ikke bygges lige nu, fordi en JavaScript-pakke mangler i dens `package.json`. Buildet tager cirka 15 minutter.
 
-Første gang bliver pakken `ghcr.io/<ejer>/canvas-lms` privat. Gør den enten offentlig (Package settings), eller log ind på serveren med en PAT der har `read:packages`:
+Imaget lægges på `ghcr.io/<ejer>/canvas-lms` med tags `latest`, `<ref>` og `<ref>-<sha>`. Pakken arver repoets offentlige synlighed og kan hentes uden login. Hvis den er privat, så log ind på serveren med en PAT der har `read:packages`:
 
 ```bash
 echo "$PAT" | docker login ghcr.io -u <bruger> --password-stdin

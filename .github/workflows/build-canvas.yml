@@ -10,16 +10,17 @@ name: Build Canvas LMS image
 #   image uden Canvas i. Brug "Dockerfile.production".
 # - Dockerfile.production har kun ARG'er med fornuftige standardværdier
 #   (RUBY=3.4, POSTGRES_CLIENT=14, CANVAS_RAILS=8.0). Ingen build-args kræves.
-# - Der findes ingen branch der hedder "stable". Brug "prod", en
-#   "stable/ÅÅÅÅ-MM-DD"-branch eller et release-tag.
+# - Der findes ingen branch der hedder "stable". Brug en
+#   "stable/ÅÅÅÅ-MM-DD"-branch. "prod" kan ikke bygges (nov. 2026): koden importerer
+#   @instructure/platform-alerts, som mangler i package.json. stable/2026-05-20 bygger.
 
 on:
   workflow_dispatch:
     inputs:
       canvas_ref:
-        description: "Branch eller tag i instructure/canvas-lms (fx prod eller stable/2026-05-20)"
+        description: "Branch eller tag i instructure/canvas-lms (fx stable/2026-05-20)"
         required: true
-        default: "prod"
+        default: "stable/2026-05-20"
 
 permissions:
   contents: read
