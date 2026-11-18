@@ -1,0 +1,16 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$CANVAS_HOST} {
+	encode gzip
+	request_body {
+		max_size 1GB
+	}
+	reverse_proxy 127.0.0.1:8000
+}
+
+{$MOODLE_HOST} {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

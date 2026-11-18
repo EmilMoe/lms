@@ -1,0 +1,4 @@
+# Filer gemmes lokalt i /usr/src/app/tmp/files (bind mount til volumet).
+production:
+  storage: local
+  path_prefix: tmp/files

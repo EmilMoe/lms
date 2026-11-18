@@ -1,0 +1,107 @@
+name: Build Canvas LMS image
+
+# Bygger et produktionsimage af Canvas LMS direkte fra instructure/canvas-lms
+# (uændret upstream-kode) og pusher det til ghcr.io/<ejer>/canvas-lms.
+# Repoet her indeholder ikke Canvas-koden og ingen hemmeligheder.
+#
+# Verificeret mod instructure/canvas-lms (prod, april 2026):
+# - Roden-"Dockerfile" er DEV-varianten (RAILS_ENV=development, kopierer ikke
+#   koden ind, kører hverken bundle install eller asset-build). Den giver et
+#   image uden Canvas i. Brug "Dockerfile.production".
+# - Dockerfile.production har kun ARG'er med fornuftige standardværdier
+#   (RUBY=3.4, POSTGRES_CLIENT=14, CANVAS_RAILS=8.0). Ingen build-args kræves.
+# - Der findes ingen branch der hedder "stable". Brug "prod", en
+#   "stable/ÅÅÅÅ-MM-DD"-branch eller et release-tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      canvas_ref:
+        description: "Branch eller tag i instructure/canvas-lms (fx prod eller stable/2026-05-20)"
+        required: true
+        default: "prod"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-canvas
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest   # offentligt repo: 4 vCPU / 16 GB RAM
+    timeout-minutes: 240     # bundle install + asset-build tager typisk 1-2 timer
+    steps:
+      - name: Frigør diskplads (Canvas-build er stort)
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+                      /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Hent Canvas-koden
+        uses: actions/checkout@v4
+        with:
+          repository: instructure/canvas-lms
+          ref: ${{ inputs.canvas_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Image-navn og tags
+        id: img
+        env:
+          CANVAS_REF: ${{ inputs.canvas_ref }}
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/canvas-lms"
+          sha="$(git rev-parse HEAD)"
+          # "stable/2026-05-20" -> "stable-2026-05-20" (tags må ikke indeholde /)
+          ref_slug="$(printf '%s' "$CANVAS_REF" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-100)"
+          {
+            echo "name=$name"
+            echo "sha=$sha"
+            echo "ref_slug=$ref_slug"
+            echo "short=${sha:0:12}"
+            echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Bygger instructure/canvas-lms@$sha ($CANVAS_REF)"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Byg og push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.production
+          platforms: linux/amd64
+          push: true
+          # Ingen layer-cache: GitHubs cache er begrænset til 10 GB, og Canvas-lagene er større.
+          tags: |
+            ${{ steps.img.outputs.name }}:latest
+            ${{ steps.img.outputs.name }}:${{ steps.img.outputs.ref_slug }}
+            ${{ steps.img.outputs.name }}:${{ steps.img.outputs.ref_slug }}-${{ steps.img.outputs.short }}
+          # AGPLv3: labels peger på den præcise, uændrede upstream-kilde.
+          labels: |
+            org.opencontainers.image.title=canvas-lms
+            org.opencontainers.image.description=Unmodified build of instructure/canvas-lms (Dockerfile.production)
+            org.opencontainers.image.source=https://github.com/instructure/canvas-lms
+            org.opencontainers.image.revision=${{ steps.img.outputs.sha }}
+            org.opencontainers.image.version=${{ inputs.canvas_ref }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.created=${{ steps.img.outputs.created }}
+
+      - name: Opsummering
+        run: |
+          {
+            echo "### Canvas-image bygget"
+            echo "- Kilde: instructure/canvas-lms@${{ steps.img.outputs.sha }} (${{ inputs.canvas_ref }})"
+            echo "- Image: \`${{ steps.img.outputs.name }}:${{ steps.img.outputs.ref_slug }}-${{ steps.img.outputs.short }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

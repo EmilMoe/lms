@@ -1,0 +1,7 @@
+production:
+  # Mindst 20 tegn. Skift den ALDRIG efter første opstart: den krypterer data i databasen.
+  encryption_key: <%= ENV.fetch("ENCRYPTION_KEY").to_json %>
+  jwt_encryption_keys:
+    - <%= ENV.fetch("CANVAS_JWT_KEY").to_json %>
+  # LTI 1.3-issuer ("iss" i id_token). Canvas Cloud bruger https://canvas.instructure.com.
+  lti_iss: <%= ENV.fetch("CANVAS_LTI_ISS", "https://canvas.instructure.com").to_json %>

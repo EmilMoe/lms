@@ -1,0 +1,56 @@
+# Moodle til test med oksigenia/moodle (vedligeholdt afløser for bitnami/moodle).
+# Variabelnavne og stier følger imagets egen README/compose.yaml (nov. 2026).
+# Hemmeligheder i moodle/.env (kopiér .env.example, chmod 600).
+#
+#   docker compose up -d && docker compose logs -f moodle   # første start: nogle minutter
+name: moodle
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  db:
+    image: mariadb:11.4          # LTS, som i imagets egen compose
+    restart: unless-stopped
+    logging: *logging
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?}
+      MARIADB_DATABASE: moodle
+      MARIADB_USER: moodle
+      MARIADB_PASSWORD: ${MOODLE_DB_PASSWORD:?}
+    volumes:
+      - ${DATA_DIR:?}/moodle/db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  moodle:
+    # Fast branch-tag: "latest" springer automatisk til næste hovedversion og opgraderer databasen.
+    image: oksigenia/moodle:${MOODLE_TAG:-5.3}
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      db: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${MOODLE_PORT:-8080}:8080"   # kun via Caddy (proxy/)
+    environment:
+      MOODLE_URL: ${MOODLE_URL:?}               # https://... bag Caddy slår sslproxy til automatisk
+      MOODLE_DB_TYPE: mariadb
+      MOODLE_DB_HOST: db
+      MOODLE_DB_NAME: moodle
+      MOODLE_DB_USER: moodle
+      MOODLE_DB_PASSWORD: ${MOODLE_DB_PASSWORD:?}
+      MOODLE_ADMIN_USER: admin
+      MOODLE_ADMIN_PASSWORD: ${MOODLE_ADMIN_PASSWORD:?}
+      MOODLE_ADMIN_EMAIL: ${MOODLE_ADMIN_EMAIL:?}
+      MOODLE_SITE_NAME: Moodle test
+      MOODLE_TIMEZONE: Europe/Copenhagen
+    volumes:
+      - ${DATA_DIR:?}/moodle/moodle:/var/www/moodle
+      - ${DATA_DIR:?}/moodle/moodledata:/var/www/moodledata

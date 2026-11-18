@@ -1,0 +1,109 @@
+# Canvas LMS (prebuilt image fra GHCR) + Postgres + Redis.
+# Hemmeligheder ligger i canvas/.env på serveren (chmod 600, aldrig i git).
+#
+#   ./gen-secrets.sh                                # én gang: laver .env
+#   docker compose up -d postgres redis
+#   docker compose --profile setup run --rm setup   # én gang: database + admin
+#   docker compose up -d
+#
+# Web lytter kun på 127.0.0.1:${CANVAS_PORT}; HTTPS ligger i proxy/ (Caddy).
+name: canvas
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+x-canvas: &canvas
+  image: ${CANVAS_IMAGE:?sæt CANVAS_IMAGE i .env}
+  restart: unless-stopped
+  logging: *logging
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  environment: &canvas-env
+    RAILS_ENV: production
+    CANVAS_DATABASE_HOST: postgres
+    CANVAS_DATABASE_NAME: canvas_production
+    CANVAS_DATABASE_USERNAME: canvas
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+    CANVAS_JWT_KEY: ${CANVAS_JWT_KEY:?}
+    CANVAS_LTI_JWK: ${CANVAS_LTI_JWK:?}
+    CANVAS_LTI_ISS: ${CANVAS_LTI_ISS:-https://canvas.instructure.com}
+    CANVAS_DOMAIN: ${CANVAS_DOMAIN:?}
+    CANVAS_SSL: ${CANVAS_SSL:-true}
+    CANVAS_REDIS_URL: redis://redis
+    # nginx/passenger i instructure/ruby-passenger
+    APP_DOMAIN: localhost          # passenger_pre_start rammer containeren selv
+    PASSENGER_MAX_POOL_SIZE: ${PASSENGER_MAX_POOL_SIZE:-2}   # ~0,5-1 GB pr. proces
+    PASSENGER_MIN_INSTANCES: "1"
+    PASSENGER_STARTUP_TIMEOUT: "300"
+  volumes:
+    - ./config/database.yml:/usr/src/app/config/database.yml:ro
+    - ./config/security.yml:/usr/src/app/config/security.yml:ro
+    - ./config/domain.yml:/usr/src/app/config/domain.yml:ro
+    - ./config/redis.yml:/usr/src/app/config/redis.yml:ro
+    - ./config/cache_store.yml:/usr/src/app/config/cache_store.yml:ro
+    - ./config/delayed_jobs.yml:/usr/src/app/config/delayed_jobs.yml:ro
+    - ./config/file_store.yml:/usr/src/app/config/file_store.yml:ro
+    - ./config/dynamic_settings.yml:/usr/src/app/config/dynamic_settings.yml:ro
+    - ${DATA_DIR:?}/canvas/files:/usr/src/app/tmp/files   # ejes af uid 9999 (docker)
+    - ${DATA_DIR:?}/canvas/log:/usr/src/app/log
+
+services:
+  postgres:
+    # Canvas' egen dev-postgres er postgres:14 + pgvector; imaget har postgresql-client-14.
+    image: pgvector/pgvector:pg14
+    restart: unless-stopped
+    logging: *logging
+    command: >
+      postgres
+      -c max_locks_per_transaction=640
+      -c max_stack_depth=5MB
+      -c random_page_cost=1.0
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+    environment:
+      POSTGRES_USER: canvas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: canvas_production
+    volumes:
+      - ${DATA_DIR:?}/canvas/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canvas -d canvas_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    <<: *canvas
+    ports:
+      - "127.0.0.1:${CANVAS_PORT:-8000}:80"
+
+  jobs:
+    <<: *canvas
+    command: ["bundle", "exec", "script/delayed_job", "run"]
+
+  # Engangsopsætning: opretter skema, standardkonto og admin-bruger.
+  setup:
+    <<: *canvas
+    profiles: ["setup"]
+    restart: "no"
+    command: ["bin/rails", "db:initial_setup"]
+    environment:
+      <<: *canvas-env
+      CANVAS_LMS_ADMIN_EMAIL: ${CANVAS_ADMIN_EMAIL:?}
+      CANVAS_LMS_ADMIN_PASSWORD: ${CANVAS_ADMIN_PASSWORD:?}
+      CANVAS_LMS_ACCOUNT_NAME: ${CANVAS_ACCOUNT_NAME:-Canvas test}
+      CANVAS_LMS_STATS_COLLECTION: opt_out

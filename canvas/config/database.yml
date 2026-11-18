@@ -1,0 +1,14 @@
+# Monteres read-only i /usr/src/app/config/. Ingen hemmeligheder her:
+# alt læses fra miljøvariabler (canvas/.env på serveren).
+production:
+  adapter: postgresql
+  encoding: utf8
+  host: <%= ENV.fetch("CANVAS_DATABASE_HOST", "postgres") %>
+  database: <%= ENV.fetch("CANVAS_DATABASE_NAME", "canvas_production") %>
+  username: <%= ENV.fetch("CANVAS_DATABASE_USERNAME", "canvas") %>
+  password: <%= ENV.fetch("POSTGRES_PASSWORD").to_json %>
+  timeout: 5000
+  prepared_statements: false
+  use_qualified_names: true
+  shard_name: public
+  schema_search_path: "''"

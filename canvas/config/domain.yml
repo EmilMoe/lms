@@ -1,0 +1,3 @@
+production:
+  domain: <%= ENV.fetch("CANVAS_DOMAIN").to_json %>
+  ssl: <%= ENV.fetch("CANVAS_SSL", "true") == "true" %>
