@@ -7,7 +7,7 @@
 # Lægger stakken i <path>/canvas (docker-compose.yml, config/, .env, data/).
 # Opdatering: kør igen med kun --path; øvrige indstillinger læses fra <path>/canvas/.env.
 # Compose og config opdateres, hemmeligheder (ENCRYPTION_KEY m.fl.) bevares.
-# Databasen sættes kun op første gang.
+# Databasen sættes kun op første gang. Canvas Data 2-mocken (dap-mock/) bygges og startes hver gang.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
@@ -71,6 +71,9 @@ if [[ -z $jwk_line ]]; then
   [[ $jwk == \{*\"kty\":\"RSA\"* ]] || die "uventet JWK-output: $jwk"
   jwk_line="CANVAS_LTI_JWK='$jwk'"
 fi
+# Canvas Data 2-mock: kan slås fra/til i .env (bevares ved opdatering).
+dap_course_access=$(env_value "$env_file" DAP_MOCK_COURSE_ACCESS)
+dap_synthetic=$(env_value "$env_file" DAP_MOCK_SYNTHETIC_WEB_LOGS)
 [[ -f $env_file ]] && cp -p "$env_file" "$env_file.bak"
 write_env "$env_file" <<EOF
 # Skrevet af canvas.sh. Indstillinger overskrives ved næste kørsel; hemmeligheder bevares.
@@ -83,11 +86,16 @@ PASSENGER_MAX_POOL_SIZE=1
 CANVAS_ADMIN_EMAIL=$EMAIL
 CANVAS_ACCOUNT_NAME=Canvas test
 $(traefik_env)
+# Canvas Data 2-mock (https://$DOMAIN/cd2): false = nøgle uden web logs / kun page_views
+DAP_MOCK_COURSE_ACCESS=${dap_course_access:-true}
+DAP_MOCK_SYNTHETIC_WEB_LOGS=${dap_synthetic:-true}
 
 $(secret POSTGRES_PASSWORD "$(rand 24)")
 $(secret ENCRYPTION_KEY "$(rand 32)")
 $(secret CANVAS_JWT_KEY "$(rand 32)")
 $(secret CANVAS_ADMIN_PASSWORD "$(rand 12)")
+$(secret DAP_MOCK_CLIENT_ID "cd2-mock-$(rand 6)")
+$(secret DAP_MOCK_CLIENT_SECRET "$(rand 24)")
 $jwk_line
 EOF
 rm -f "$env_file.bak"
@@ -114,10 +122,18 @@ fi
 step "Starter Canvas"
 as_owner docker compose up -d --remove-orphans --force-recreate web jobs   # config/ er nye filer; uden recreate ser containerne de gamle
 
+step "Bygger og starter Canvas Data 2-mocken"
+as_owner docker compose build dap-mock
+as_owner docker compose up -d --force-recreate dap-mock
+
 cat <<EOF
 
 Canvas: https://$DOMAIN  (første side kan tage et minut, mens Passenger starter)
 Admin:  $EMAIL
 Kode:   sudo grep CANVAS_ADMIN_PASSWORD $env_file
+
+Canvas Data 2-mock: https://$DOMAIN/cd2
+  Client ID og secret: sudo grep DAP_MOCK_CLIENT $env_file
+  I Nexus: CANVAS_DATA_URL=https://$DOMAIN/cd2
 Logs:   cd $stack && docker compose logs -f web jobs
 EOF

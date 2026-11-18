@@ -103,6 +103,44 @@ services:
     <<: *canvas
     command: ["bundle", "exec", "script/delayed_job", "run"]
 
+  # Mock af Canvas Data 2 (DAP), som open source-Canvas ikke har. Læser Canvas' database
+  # (skrivebeskyttet) og svarer på https://<CANVAS_DOMAIN>/cd2/... Se dap-mock/app.py.
+  dap-mock:
+    build: ./dap-mock
+    image: canvas-dap-mock:local
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGDATABASE: canvas_production
+      PGUSER: canvas
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      CANVAS_DOMAIN: ${CANVAS_DOMAIN:?}
+      DAP_PUBLIC_URL: https://${CANVAS_DOMAIN:?}/cd2
+      DAP_CLIENT_ID: ${DAP_MOCK_CLIENT_ID:?}
+      DAP_CLIENT_SECRET: ${DAP_MOCK_CLIENT_SECRET:?}
+      DAP_COURSE_ACCESS: ${DAP_MOCK_COURSE_ACCESS:-true}
+      DAP_SYNTHETIC_WEB_LOGS: ${DAP_MOCK_SYNTHETIC_WEB_LOGS:-true}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [default, traefik]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.canvas-dap.rule: Host(`${CANVAS_DOMAIN:?}`) && PathPrefix(`/cd2/`)
+      traefik.http.routers.canvas-dap.priority: "1000"   # før Canvas' egen router på samme domæne
+      traefik.http.routers.canvas-dap.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.canvas-dap.tls: "true"
+      traefik.http.routers.canvas-dap.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.routers.canvas-dap.middlewares: canvas-dap-strip
+      traefik.http.middlewares.canvas-dap-strip.stripprefix.prefixes: /cd2
+      traefik.http.services.canvas-dap.loadbalancer.server.port: "8080"
+
   # Engangsopsætning: opretter skema, standardkonto og admin-bruger.
   setup:
     <<: *canvas

@@ -6,6 +6,7 @@ Selv-hostet Canvas og Moodle til at udvikle og teste vores LTI 1.3- og API-integ
 .github/workflows/build-canvas.yml   bygger Canvas-imaget i GitHub Actions -> GHCR
 server/setup-server.sh               swap, volume-mount, Docker på volumet
 canvas.sh  + canvas/                 installerer Canvas, Postgres og Redis bag Traefik
+canvas/dap-mock/                     mock af Canvas Data 2 (kursusadgang), som open source-Canvas ikke har
 moodle.sh  + moodle/                 installerer Moodle og MariaDB bag Traefik
 lib/common.sh                        fælles kode til de to scripts
 install.sh                           kører canvas.sh/moodle.sh direkte fra GitHub (curl)
@@ -101,6 +102,34 @@ Importen kan køres igen. Canvas opdaterer rækkerne ud fra deres ID (`user_id`,
 **Kursusindhold** (moduler, sider, opgaver) ligger ikke i `testdata/`. Har du en Common Cartridge-fil (`.imscc`) eller en eksport fra et andet Canvas-kursus, importerer du den i kurset under Settings → **Import Course Content**.
 
 **REST-API** til alt andet (opgaver, afleveringer, karakterer): opret en token under Account → Settings → **+ New Access Token** og brug fx `POST /api/v1/courses/:id/assignments`.
+
+### Canvas Data 2-mock (kursusadgang)
+
+Canvas Data 2 (DAP), som Nexus henter Course Access og Course Access Log fra, er en hostet Instructure-tjeneste. Den findes ikke i open source-Canvas. `canvas.sh` starter derfor en lille mock (`canvas/dap-mock/`), der svarer som Canvas Data 2 på `https://<canvas-domæne>/cd2`:
+
+- `canvas.enrollment_terms`, `courses`, `enrollments` og `roles` læses direkte (skrivebeskyttet) fra Canvas' database, med de samme id'er som REST-API'et.
+- `canvas_logs.web_logs` bygges af Canvas' `page_views` (hvis de gemmes i databasen) plus genererede besøg for aktive tilmeldinger i publicerede kurser de seneste 30 dage: browser, Canvas-app og lidt API-trafik, flest på hverdage i dagtimerne. Besøgene er faste pr. bruger, kursus og dag, så et nyt snapshot giver de samme data, og incremental-kald giver kun det nye.
+
+**Sådan bruges den fra Nexus:**
+
+1. Sæt `CANVAS_DATA_URL=https://<canvas-domæne>/cd2` i Nexus' `.env`. Uden den bruger Nexus Instructures rigtige `{region}.api-gateway.instructure.com`.
+2. Hent client ID og secret på serveren:
+
+   ```bash
+   sudo grep DAP_MOCK_CLIENT <path>/canvas/.env
+   ```
+
+3. Indtast dem på Canvas-forbindelsens Canvas Data 2-fane i Nexus og test forbindelsen. Regionen bliver `eu-west-1`, men det er ligegyldigt for mocken.
+4. Kør sync som normalt. Course Access og Course Access Log fyldes med de seneste 30 dage.
+
+Indstillinger i `<path>/canvas/.env` (bevares ved opdatering, genstart med `docker compose up -d dap-mock`):
+
+| Variabel | Standard | |
+|---|---|---|
+| `DAP_MOCK_COURSE_ACCESS` | `true` | `false` svarer til en rigtig nøgle uden web logs, så Nexus' "without course access"-vej kan testes |
+| `DAP_MOCK_SYNTHETIC_WEB_LOGS` | `true` | `false` giver kun Canvas' egne `page_views` |
+
+Mocken laver kun den normale vej: ingen throttling, ventende jobs eller andre fejl end "ingen nye data" og "for langt tilbage" (over 30 dage). Logs: `docker compose logs -f dap-mock`.
 
 ### Moodle
 

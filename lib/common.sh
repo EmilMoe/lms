@@ -70,16 +70,20 @@ as_owner() {
   if [[ $OWNER == root ]]; then "$@"; else sudo -u "$OWNER" -H -- "$@"; fi
 }
 
-# Kopiér compose og config fra repoet til stakmappen. .env og data/ røres ikke.
+# Kopiér compose og repoets mapper (config/, dap-mock/ ...) til stakmappen. .env og data/ røres ikke.
 install_stack() {
-  local src=$1 dest=$2
+  local src=$1 dest=$2 dir name
   mkdir -p "$dest"
   install -m 644 "$src/docker-compose.yml" "$dest/docker-compose.yml"
-  if [[ -d $src/config ]]; then
-    rm -rf "$dest/config"
-    cp -R "$src/config" "$dest/config"
-  fi
-  chown -R "$OWNER": "$dest/docker-compose.yml" "${dest}/config" 2>/dev/null || true
+  chown "$OWNER": "$dest/docker-compose.yml"
+  for dir in "$src"/*/; do
+    [[ -d $dir ]] || continue
+    name=$(basename "$dir")
+    [[ $name == data ]] && continue
+    rm -rf "${dest:?}/$name"
+    cp -R "$dir" "$dest/$name"
+    chown -R "$OWNER": "$dest/$name"
+  done
   chown "$OWNER": "$dest"
 }
 
