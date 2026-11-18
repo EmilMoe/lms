@@ -67,7 +67,15 @@ docker compose up -d
 
 ## RAM
 
-Kør ét LMS ad gangen: `docker compose stop` i den ene mappe før `up -d` i den anden. Canvas bruger cirka 2,5-3 GB (2 Passenger-processer, jobs-worker, Postgres og Redis).
+Begge LMS'er kan køre samtidig, når de bare leverer demodata gennem API'et. Omtrentligt forbrug i tomgang:
+
+| | RAM |
+|---|---|
+| Canvas (1 Passenger-proces, jobs-worker, Postgres, Redis) | 2-2,5 GB |
+| Moodle (Apache/PHP, MariaDB) | 0,4-0,6 GB |
+| Caddy og OS | 0,3-0,4 GB |
+
+Det er tæt på 4 GB, så swapfilen tager spidserne. Spidserne kommer især, når Canvas starter (asset-load) og ved tunge baggrundsjob. Hold øje med `free -h` og `docker stats --no-stream`. Hvis serveren swapper hele tiden, så stop den ene stak (`docker compose stop`) eller opgradér dropletten til 8 GB.
 
 ## AGPLv3
 
