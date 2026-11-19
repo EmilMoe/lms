@@ -123,13 +123,21 @@ Opret kurset:
 sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST1 --size=S
 ```
 
+Hver kørsel opretter ét kursus; `--size` styrer kun indholdet. Flere kurser får du ved at køre den igen med et nyt, unikt kortnavn, fx i en løkke (`-T` fordi der ikke er nogen terminal i løkken):
+
+```bash
+for i in 2 3 4 5; do sudo docker compose exec -T -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST$i --size=S; done
+```
+
+Testbrugerne genbruges på tværs af kurserne. `public/admin/tool/generator/cli/maketestsite.php --size=...` laver en hel testside med mange kurser på én gang, men er tung allerede fra S.
+
 Sæt debugging tilbage bagefter:
 
 ```bash
 sudo docker compose exec -u www-data moodle php admin/cli/cfg.php --name=debug --set=0
 ```
 
-Kortnavnet skal være unikt, så brug TEST2 osv. til flere kurser. Moodle 5.1+ har webkoden (fx `admin/tool/generator`) under `public/`, mens `admin/cli/` ligger i roden; ældre versioner har alt i roden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
+Moodle 5.1+ har webkoden (fx `admin/tool/generator`) under `public/`, mens `admin/cli/` ligger i roden; ældre versioner har alt i roden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
 
 **CSV-upload** af datasættet i `testdata/moodle/`, i denne rækkefølge:
 
