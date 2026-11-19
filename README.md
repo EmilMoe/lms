@@ -105,13 +105,31 @@ Importen kan køres igen. Canvas opdaterer rækkerne ud fra deres ID (`user_id`,
 
 ### Moodle
 
-**Indbygget generator** til kurser med aktiviteter, brugere og forum-indlæg (størrelse XS-XXL):
+**Indbygget generator** til kurser med aktiviteter, brugere og forum-indlæg (størrelse XS-XXL). Generatoren kører kun, når debugging står på "Developer"; ellers svarer den `Not available on this server because debugging is not set to DEVELOPER`. Kør kommandoerne fra `<path>/moodle`.
+
+Slå Developer-debugging til. `debugdisplay=0` holder fejlbeskederne ude af websiderne imens:
 
 ```bash
-cd <path>/moodle && sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST1 --size=S
+sudo docker compose exec -u www-data moodle php public/admin/cli/cfg.php --name=debug --set=32767
 ```
 
-Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
+```bash
+sudo docker compose exec -u www-data moodle php public/admin/cli/cfg.php --name=debugdisplay --set=0
+```
+
+Opret kurset:
+
+```bash
+sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/maketestcourse.php --shortname=TEST1 --size=S
+```
+
+Sæt debugging tilbage bagefter:
+
+```bash
+sudo docker compose exec -u www-data moodle php public/admin/cli/cfg.php --name=debug --set=0
+```
+
+Kortnavnet skal være unikt, så brug TEST2 osv. til flere kurser. Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
 
 **CSV-upload** af datasættet i `testdata/moodle/`, i denne rækkefølge:
 
