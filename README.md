@@ -110,11 +110,11 @@ Importen kan køres igen. Canvas opdaterer rækkerne ud fra deres ID (`user_id`,
 Slå Developer-debugging til. `debugdisplay=0` holder fejlbeskederne ude af websiderne imens:
 
 ```bash
-sudo docker compose exec -u www-data moodle php public/admin/cli/cfg.php --name=debug --set=32767
+sudo docker compose exec -u www-data moodle php admin/cli/cfg.php --name=debug --set=32767
 ```
 
 ```bash
-sudo docker compose exec -u www-data moodle php public/admin/cli/cfg.php --name=debugdisplay --set=0
+sudo docker compose exec -u www-data moodle php admin/cli/cfg.php --name=debugdisplay --set=0
 ```
 
 Opret kurset:
@@ -126,10 +126,10 @@ sudo docker compose exec -u www-data moodle php public/admin/tool/generator/cli/
 Sæt debugging tilbage bagefter:
 
 ```bash
-sudo docker compose exec -u www-data moodle php public/admin/cli/cfg.php --name=debug --set=0
+sudo docker compose exec -u www-data moodle php admin/cli/cfg.php --name=debug --set=0
 ```
 
-Kortnavnet skal være unikt, så brug TEST2 osv. til flere kurser. Moodle 5.1+ har koden under `public/`; ældre versioner uden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
+Kortnavnet skal være unikt, så brug TEST2 osv. til flere kurser. Moodle 5.1+ har webkoden (fx `admin/tool/generator`) under `public/`, mens `admin/cli/` ligger i roden; ældre versioner har alt i roden. Den samme funktion findes under Site administration → Development → Make test course, når debugging er sat til "Developer".
 
 **CSV-upload** af datasættet i `testdata/moodle/`, i denne rækkefølge:
 
