@@ -197,7 +197,20 @@ Blackboard Learn er lukket kode og kan ikke selvhostes som Canvas og Moodle. Ant
 
 - **REST** (`/learn/api/public/...`): token med application key og secret, `terms`, `v3/courses` (også organisationer), medlemskaber med `expand=user` og `lastAccessed`-filter, `users` og `courseRoles`. Id'erne kan slås op med `_12_1`, `uuid:`, `courseId:`/`userName:` og `externalId:`. Svarene har `fields=` og `paging.nextPage` som i Learn.
 - **LTI 1.3**: Hos en rigtig Blackboard går LTI-login og nøgler gennem Anthology Developer Portal (`developer.blackboard.com`). Mocken spiller den rolle: `/api/v1/gateway/oidcauth` og `/api/v1/management/applications/<id>/jwks.json`. `context.id` og `sub` er kursets og brugerens uuid, som i Learn.
-- **Testside** på `https://<blackboard-domæne>/` (admin og `BB_MOCK_UI_PASSWORD`). Den viser de værdier, Nexus skal have, og lister kurser og medlemmer. Knappen **Åbn i Nexus** launcher Nexus som den bruger, og administratoren kan åbnes uden kursus (Nexus' admin-sider).
+- **Administrator Panel** på `https://<blackboard-domæne>/ultra/admin`, samme adresse som Nexus' guide linker til. Her gøres det, en Learn-administrator gør, og mocken håndhæver det som Learn:
+  - **Users → System Roles → Create Role**, derefter rollens **Privileges**: entitlements slås til med flueben og kan filtreres.
+  - **Users → Users → Create User** med en primær systemrolle. Seed-brugernes systemrolle kan også ændres.
+  - **Building Blocks → REST API Integrations → Create Integration**: Application ID, Learn User og End User Access.
+  - **Integrations → LTI Tool Providers → Register LTI 1.3/Advantage Tool**: client ID'et giver et deployment ID. Tool status og user fields (Role in Course, Name, Email Address) kan rettes under **Edit**.
+- **Testside** på `https://<blackboard-domæne>/`. Begge sider kræver login som admin med `BB_MOCK_UI_PASSWORD`. Testsiden viser de værdier, Nexus skal have, og om opsætningen i Administrator Panel er på plads. Den lister også kurser og medlemmer. Knappen **Åbn i Nexus** launcher Nexus som den bruger, og administratoren kan åbnes uden kursus (Nexus' admin-sider).
+
+**Det håndhæves:**
+
+- **Token:** Der gives kun token, når applikationen er tilføjet som REST API-integration. Ellers svares 401 `invalid_client`, og det gælder også et token, der er udstedt før integrationen blev slettet.
+- **Rettigheder:** Kaldene har integrationsbrugerens rettigheder. System Administrator har alle, User ingen, og en egen rolle har de privilegier, der er slået til.
+  - Uden et entitlement svarer kaldet 403: `term.VIEW` (terms), `system.course.VIEW` (courses), `course.user.VIEW` (medlemskaber), `system.user.VIEW` (users) og `system.courserole.manager.VIEW` (courseRoles).
+  - Uden `course.configure-properties.EXECUTE` mangler kursernes `uuid`, og uden `system.user.VIEW` mangler brugerne i medlemskaberne. Nexus' forbindelsestest melder netop de fejl.
+- **LTI:** Launches virker kun, når værktøjet er registreret og godkendt (Approved). `deployment_id` er værktøjets. Navn og e-mail kommer kun med, når de er slået til, og roller kun med Role in Course.
 
 **Installér** (Nexus' rod-URL i `--tool-url`, uden sti):
 
@@ -205,7 +218,7 @@ Blackboard Learn er lukket kode og kan ikke selvhostes som Canvas og Moodle. Ant
 curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh | sudo bash -s -- blackboard --domain=blackboard.example.com --path=/mnt/<volume> --tool-url=https://nexus.example.com --owner=deploy
 ```
 
-Opdatering: kør igen med kun `--path`. Application ID, key, secret, deployment ID, kodeordet og LTI-nøglen (`data/lti-private.pem`) bevares. Mocken bruger 30-40 MB RAM.
+Opdatering: kør igen med kun `--path`. Application ID, key, secret, kodeordet, LTI-nøglen (`data/lti-private.pem`) og opsætningen fra Administrator Panel (`data/blackboard.sqlite`) bevares. Mocken bruger 30-40 MB RAM.
 
 **Testdata** ligger i `testdata/blackboard/` og er det samme datasæt som til de andre LMS'er, med lidt ekstra, så Nexus' filtre kan testes:
 
@@ -213,7 +226,7 @@ Opdatering: kør igen med kun `--path`. Application ID, key, secret, deployment 
 - t02 er TeachingAssistant i ENG101.
 - s18's medlemskab i ENG101 er slået fra (`available=No`).
 - `LAERER` er en organisation, som Nexus springer over.
-- `bbadmin` er systemadministrator og bruges til admin-launch.
+- `bbadmin` er systemadministrator og bruges til admin-launch. Den kan også bindes til REST-integrationen, hvis privilegierne ikke er det, der testes.
 
 CSV-filerne kopieres til `<path>/blackboard/seed/` og læses igen, når de ændres. Hver række får et fast `_N_1`-id og uuid, gemt i `data/blackboard.sqlite`. En række, der fjernes, forsvinder fra API'et, men får de samme id'er igen, hvis den kommer tilbage. En kørsel af `blackboard.sh` erstatter `seed/` med repoets version.
 
@@ -221,15 +234,18 @@ CSV-filerne kopieres til `<path>/blackboard/seed/` og læses igen, når de ændr
 
 **Sådan bruges den fra Nexus:**
 
-1. Opret en Blackboard-forbindelse med testsidens **Base URL**, **Application ID** og **Application key**, og hent secret på serveren:
+1. Opret en Blackboard-forbindelse i Nexus med testsidens **Base URL**, **Application ID** og **Application key**, og hent secret på serveren:
 
    ```bash
    sudo grep BB_MOCK_SECRET <path>/blackboard/.env
    ```
 
-   Test forbindelsen. Den kontrollerer de samme rettigheder som mod en rigtig Learn, og mocken giver alle.
-2. Tilføj LTI-registreringen manuelt på tenantens LTI-fane. Client ID er application ID'et. Åbn **Platform** og ret **Issuer**, **OIDC auth endpoint** og **Platform keyset URL** til testsidens værdier (standardværdierne peger på `developer.blackboard.com`), og tilføj **Deployment ID**.
-3. Kør sync som normalt, og åbn Nexus fra testsiden. Sæt evt. "Target link" øverst (standard `lti/launch/course-insights`; `lti/launch` er Nexus' egen launch).
+2. Følg Nexus' guide til REST-opsætningen. Linket **Administrator Panel** fører til mockens. Opret systemrollen og slå dens privilegier til, opret brugeren og tilføj REST API-integrationen med application ID'et. Test forbindelsen i Nexus.
+3. Følg Nexus' LTI-guide. Registrér værktøjet under **Integrations → LTI Tool Providers** med client ID'et (= application ID'et). Lad Tool status stå på Approved, fjern fluebenene ved Name og Email Address, og kopiér **Deployment ID**.
+4. Tilføj LTI-registreringen manuelt på tenantens LTI-fane med deployment ID'et. Åbn **Platform** og ret **Issuer**, **OIDC auth endpoint** og **Platform keyset URL** til testsidens værdier. Standardværdierne peger på `developer.blackboard.com`.
+5. Kør sync som normalt, og åbn Nexus fra testsiden. Sæt evt. "Target link" øverst (standard `lti/launch/course-insights`; `lti/launch` er Nexus' egen launch).
+
+Start forfra med opsætningen: stop mocken, slet `data/blackboard.sqlite` og start den igen. Kurser og brugere får så nye id'er, så Nexus skal synce forfra.
 
 Indstillinger i `<path>/blackboard/.env` (genstart med `docker compose up -d mock`):
 
@@ -239,7 +255,7 @@ Indstillinger i `<path>/blackboard/.env` (genstart med `docker compose up -d moc
 | `BB_MOCK_BACKFILL_DAYS` | `30` | dages historik for nye medlemskaber |
 | `BB_MOCK_DAILY_CALL_LIMIT` | `0` | fx `50`: svar 429 med `Retry-After` til midnat UTC efter så mange kald pr. døgn, som Anthologys grænse. `0` = ingen grænse |
 
-**Det kan mocken ikke:** Den kan ikke skrive (kun GET efter token). Den tjekker ikke entitlements, så "mangler rettighed" kan ikke testes. Den har ingen Ultra-brugerflade, ingen deep linking og ingen LTI Advantage-tjenester (NRPS, AGS). Uoverensstemmelser med den rigtige Learn fanges derfor ikke her. Logs: `docker compose logs -f mock`.
+**Det kan mocken ikke:** Den kan ikke skrive (kun GET efter token), og kurser, brugere og medlemskaber oprettes i CSV-filerne, ikke i Administrator Panel. Privilegiernes navne ligner Learns, men det er kun entitlementet, der tæller. Den har ingen Ultra-brugerflade, ingen deep linking og ingen LTI Advantage-tjenester (NRPS, AGS). Uoverensstemmelser med den rigtige Learn fanges derfor ikke her. Logs: `docker compose logs -f mock`.
 
 ## RAM
 

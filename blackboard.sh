@@ -8,7 +8,7 @@
 # Learn's REST-API og som Anthology Developer Portal i LTI 1.3 (blackboard/mock/app.py).
 # Lægger stakken i <path>/blackboard (docker-compose.yml, mock/, seed/, .env, data/).
 # Opdatering: kør igen med kun --path; øvrige indstillinger læses fra <path>/blackboard/.env.
-# Nøgler og id'er bevares, seed/ erstattes af testdata/blackboard.
+# Nøgler, id'er og opsætningen fra Administrator Panel bevares, seed/ erstattes af testdata/blackboard.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
@@ -67,7 +67,6 @@ $(traefik_env)
 $(keep BB_MOCK_APPLICATION_ID "$(uuid)")
 $(keep BB_MOCK_APPLICATION_KEY "$(uuid)")
 $(keep BB_MOCK_SECRET "$(rand 24)")
-$(keep BB_MOCK_DEPLOYMENT_ID "_$((RANDOM % 900 + 100))_1")
 $(keep BB_MOCK_UI_PASSWORD "$(rand 12)")
 $(keep BB_MOCK_BACKFILL_DAYS 30)
 $(keep BB_MOCK_DAILY_CALL_LIMIT 0)
@@ -86,7 +85,8 @@ as_owner docker compose up -d --remove-orphans --force-recreate
 cat <<INFO
 
 Blackboard-mock: https://$DOMAIN  (admin / sudo grep BB_MOCK_UI_PASSWORD $env_file)
-Siden viser alt, der skal ind i Nexus. Secret: sudo grep BB_MOCK_SECRET $env_file
+Siden viser alt, der skal ind i Nexus, og opsætningens status. Secret: sudo grep BB_MOCK_SECRET $env_file
+Administrator Panel: https://$DOMAIN/ultra/admin
 Logs:            cd $stack && docker compose logs -f mock
 INFO
 [[ -n $TOOL_URL ]] || echo "Advarsel: --tool-url er ikke sat, så knapperne til at åbne Nexus virker ikke." >&2
