@@ -1,4 +1,4 @@
-# Fælles hjælpefunktioner til canvas.sh og moodle.sh. Sources, køres ikke direkte.
+# Fælles hjælpefunktioner til canvas.sh, moodle.sh og blackboard.sh. Sources, køres ikke direkte.
 # shellcheck shell=bash disable=SC2034
 
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

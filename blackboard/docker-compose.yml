@@ -1,0 +1,52 @@
+# Blackboard-mock til test af Nexus' Blackboard-integration. Blackboard Learn er lukket kode og kan
+# ikke selvhostes som Canvas og Moodle, så mocken svarer som Learn's REST-API og som Anthology
+# Developer Portal i LTI 1.3, med data fra seed/ (kopieret fra testdata/blackboard). Se mock/app.py.
+#
+# Installeres og opdateres med ../blackboard.sh, som kopierer denne mappe til <path>/blackboard,
+# lægger testdata i seed/ og skriver .env (hemmeligheder, chmod 600, aldrig i git).
+#
+# Ingen porte på værten: Traefik når mocken via sit eksterne netværk.
+name: blackboard
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  mock:
+    build: ./mock
+    image: blackboard-mock:local
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      BB_PUBLIC_URL: https://${BLACKBOARD_DOMAIN:?}
+      BB_APPLICATION_ID: ${BB_MOCK_APPLICATION_ID:?}
+      BB_APPLICATION_KEY: ${BB_MOCK_APPLICATION_KEY:?}
+      BB_SECRET: ${BB_MOCK_SECRET:?}
+      BB_DEPLOYMENT_ID: ${BB_MOCK_DEPLOYMENT_ID:?}
+      BB_UI_PASSWORD: ${BB_MOCK_UI_PASSWORD:?}
+      BB_TOOL_URL: ${BB_MOCK_TOOL_URL:-}
+      BB_BACKFILL_DAYS: ${BB_MOCK_BACKFILL_DAYS:-30}
+      BB_DAILY_CALL_LIMIT: ${BB_MOCK_DAILY_CALL_LIMIT:-0}
+    volumes:
+      - ./data:/data        # faste id'er (blackboard.sqlite) og LTI-nøglen; ejes af uid 10001
+      - ./seed:/seed:ro     # CSV-filerne; læses igen, når de ændres
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [default, traefik]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.blackboard.rule: Host(`${BLACKBOARD_DOMAIN:?}`)
+      traefik.http.routers.blackboard.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.blackboard.tls: "true"
+      traefik.http.routers.blackboard.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.blackboard.loadbalancer.server.port: "8080"
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}

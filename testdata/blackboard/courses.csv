@@ -1,0 +1,5 @@
+course_id,name,term_id,organization,available
+DAN101,"Dansk, 1. semester",2026E,false,Yes
+MAT101,"Matematik, 1. semester",2026E,false,Yes
+ENG101,"Engelsk, 1. semester",,false,Yes
+LAERER,Lærerværelset,,true,Yes

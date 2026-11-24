@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Installerer eller opdaterer Canvas eller Moodle uden at klone repoet:
+# Installerer eller opdaterer Canvas, Moodle eller Blackboard-mocken uden at klone repoet:
 #
 #   curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh \
 #     | sudo bash -s -- canvas --domain=canvas.example.com --path=/mnt/<volume> \
 #                              --email=admin@example.com --owner=deploy
 #
-# Første argument er "canvas" eller "moodle"; resten sendes videre til
-# canvas.sh/moodle.sh (se --help). Henter repoet som tarball til en midlertidig
+# Første argument er "canvas", "moodle" eller "blackboard"; resten sendes videre til
+# canvas.sh/moodle.sh/blackboard.sh (se --help). Henter repoet som tarball til en midlertidig
 # mappe, kører scriptet og rydder op. Stakken selv ligger i <path>/<lms>.
 #
 # Lås til et tag eller en commit i stedet for main (variablen skal stå efter sudo):
@@ -22,10 +22,10 @@ main() {
   local target=${1:-}
 
   case $target in
-    canvas|moodle) shift ;;
+    canvas|moodle|blackboard) shift ;;
     *)
       sed -n '2,13p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true
-      echo "Brug: install.sh canvas|moodle [flag...]" >&2
+      echo "Brug: install.sh canvas|moodle|blackboard [flag...]" >&2
       exit 1 ;;
   esac
   [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Ugyldigt LMS_REPO: $repo" >&2; exit 1; }

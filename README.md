@@ -1,6 +1,6 @@
-# Test-LMS'er: Canvas og Moodle på staging
+# Test-LMS'er: Canvas, Moodle og Blackboard på staging
 
-Selv-hostet Canvas og Moodle til at udvikle og teste vores LTI 1.3- og API-integration. De kører på en separat DigitalOcean-droplet (2 vCPU, 4 GB RAM) med et volume på 200 GB, aldrig på produktionsserveren.
+Selv-hostet Canvas og Moodle og en Blackboard-mock til at udvikle og teste vores LTI 1.3- og API-integration. De kører på en separat DigitalOcean-droplet (2 vCPU, 4 GB RAM) med et volume på 200 GB, aldrig på produktionsserveren.
 
 ```
 .github/workflows/build-canvas.yml   bygger Canvas-imaget i GitHub Actions -> GHCR
@@ -8,11 +8,12 @@ server/setup-server.sh               swap, volume-mount, Docker på volumet
 canvas.sh  + canvas/                 installerer Canvas, Postgres og Redis bag Traefik
 canvas/dap-mock/                     mock af Canvas Data 2 (kursusadgang), som open source-Canvas ikke har
 moodle.sh  + moodle/                 installerer Moodle og MariaDB bag Traefik
-lib/common.sh                        fælles kode til de to scripts
-install.sh                           kører canvas.sh/moodle.sh direkte fra GitHub (curl)
+blackboard.sh + blackboard/          installerer Blackboard-mocken (Learn REST-API + LTI 1.3) bag Traefik
+lib/common.sh                        fælles kode til scriptene
+install.sh                           kører canvas.sh/moodle.sh/blackboard.sh direkte fra GitHub (curl)
 ```
 
-Scriptene kopierer compose-filerne til `<path>/canvas` og `<path>/moodle` på volumet og skriver `.env` med tilfældige kodeord dér (chmod 600). Domæner, e-mail, stier og hemmeligheder gives som flag på serveren og kommer aldrig i repoet eller imaget.
+Scriptene kopierer compose-filerne til `<path>/canvas`, `<path>/moodle` og `<path>/blackboard` på volumet og skriver `.env` med tilfældige kodeord dér (chmod 600). Domæner, e-mail, stier og hemmeligheder gives som flag på serveren og kommer aldrig i repoet eller imaget.
 
 ## 1. Byg Canvas-imaget
 
@@ -41,7 +42,7 @@ Firewall: kun 22, 80 og 443 skal være åbne (Traefik). Stakkene publicerer inge
 
 ## 3. Traefik
 
-Begge stakke forventer en kørende Traefik med et eksternt docker-netværk. Der publiceres ingen porte på værten; routere sættes op via labels. Standardnavnene kan ændres med flag:
+Alle stakke forventer en kørende Traefik med et eksternt docker-netværk. Der publiceres ingen porte på værten; routere sættes op via labels. Standardnavnene kan ændres med flag:
 
 | Flag | Standard |
 |---|---|
@@ -49,7 +50,7 @@ Begge stakke forventer en kørende Traefik med et eksternt docker-netværk. Der 
 | `--traefik-entrypoint` | `websecure` |
 | `--traefik-certresolver` | `letsencrypt` |
 
-DNS for begge domæner skal pege på dropletten.
+DNS for alle domæner skal pege på dropletten.
 
 ## 4. Canvas og Moodle
 
@@ -78,7 +79,7 @@ LTI 1.3: Canvas signerer id_tokens med `CANVAS_LTI_JWK`, som indsættes via `con
 
 ## 5. Testdata
 
-`testdata/` indeholder det samme lille, fiktive datasæt til begge LMS'er: 3 kurser (DAN101, MAT101, ENG101), 2 lærere og 18 elever med samme ID'er. Brugerne har ingen adgangskode, fordi repoet er offentligt og serveren ligger på internettet. Se data som en bruger med "Act as user" (Canvas) eller "Log in as" (Moodle).
+`testdata/` indeholder det samme lille, fiktive datasæt til alle tre LMS'er: 3 kurser (DAN101, MAT101, ENG101), 2 lærere og 18 elever med samme ID'er. Brugerne har ingen adgangskode, fordi repoet er offentligt og serveren ligger på internettet. Se data som en bruger med "Act as user" (Canvas), "Log in as" (Moodle) eller "Åbn i Nexus" på Blackboard-mockens testside.
 
 ### Canvas
 
@@ -190,14 +191,65 @@ Indstillinger i `<path>/canvas/.env` (bevares ved opdatering, genstart med `dock
 
 Mocken laver kun den normale vej: ingen throttling, ventende jobs eller andre fejl end "ingen nye data" og "for langt tilbage". Logs: `docker compose logs -f dap-mock`.
 
+## 7. Blackboard-mock
+
+Blackboard Learn er lukket kode og kan ikke selvhostes som Canvas og Moodle. Anthology har kun et udvikler-image til AWS, som kræver login, udløber og har brug for langt mere RAM end dropletten. Derfor er der en mock (`blackboard/mock/app.py`), som svarer som Blackboard på præcis de kald, Nexus laver:
+
+- **REST** (`/learn/api/public/...`): token med application key og secret, `terms`, `v3/courses` (også organisationer), medlemskaber med `expand=user` og `lastAccessed`-filter, `users` og `courseRoles`. Id'erne kan slås op med `_12_1`, `uuid:`, `courseId:`/`userName:` og `externalId:`. Svarene har `fields=` og `paging.nextPage` som i Learn.
+- **LTI 1.3**: Hos en rigtig Blackboard går LTI-login og nøgler gennem Anthology Developer Portal (`developer.blackboard.com`). Mocken spiller den rolle: `/api/v1/gateway/oidcauth` og `/api/v1/management/applications/<id>/jwks.json`. `context.id` og `sub` er kursets og brugerens uuid, som i Learn.
+- **Testside** på `https://<blackboard-domæne>/` (admin og `BB_MOCK_UI_PASSWORD`). Den viser de værdier, Nexus skal have, og lister kurser og medlemmer. Knappen **Åbn i Nexus** launcher Nexus som den bruger, og administratoren kan åbnes uden kursus (Nexus' admin-sider).
+
+**Installér** (Nexus' rod-URL i `--tool-url`, uden sti):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EmilMoe/lms/main/install.sh | sudo bash -s -- blackboard --domain=blackboard.example.com --path=/mnt/<volume> --tool-url=https://nexus.example.com --owner=deploy
+```
+
+Opdatering: kør igen med kun `--path`. Application ID, key, secret, deployment ID, kodeordet og LTI-nøglen (`data/lti-private.pem`) bevares. Mocken bruger 30-40 MB RAM.
+
+**Testdata** ligger i `testdata/blackboard/` og er det samme datasæt som til de andre LMS'er, med lidt ekstra, så Nexus' filtre kan testes:
+
+- ENG101 har ingen term, så Nexus' "No term" bruges.
+- t02 er TeachingAssistant i ENG101.
+- s18's medlemskab i ENG101 er slået fra (`available=No`).
+- `LAERER` er en organisation, som Nexus springer over.
+- `bbadmin` er systemadministrator og bruges til admin-launch.
+
+CSV-filerne kopieres til `<path>/blackboard/seed/` og læses igen, når de ændres. Hver række får et fast `_N_1`-id og uuid, gemt i `data/blackboard.sqlite`. En række, der fjernes, forsvinder fra API'et, men får de samme id'er igen, hvis den kommer tilbage. En kørsel af `blackboard.sh` erstatter `seed/` med repoets version.
+
+**lastAccessed** (kursusadgang): Hvert medlemskab har en fast profil. Lærere er inde de fleste hverdage i arbejdstiden, elever sjældnere og også om aftenen. `lastAccessed` er seneste besøg til og med nu. Fortiden ændrer sig aldrig, så hver daglige sync i Nexus finder nye besøgsdage. Et nyt medlemskab får `created` og historik `BB_MOCK_BACKFILL_DAYS` dage bagud.
+
+**Sådan bruges den fra Nexus:**
+
+1. Opret en Blackboard-forbindelse med testsidens **Base URL**, **Application ID** og **Application key**, og hent secret på serveren:
+
+   ```bash
+   sudo grep BB_MOCK_SECRET <path>/blackboard/.env
+   ```
+
+   Test forbindelsen. Den kontrollerer de samme rettigheder som mod en rigtig Learn, og mocken giver alle.
+2. Tilføj LTI-registreringen manuelt på tenantens LTI-fane. Client ID er application ID'et. Åbn **Platform** og ret **Issuer**, **OIDC auth endpoint** og **Platform keyset URL** til testsidens værdier (standardværdierne peger på `developer.blackboard.com`), og tilføj **Deployment ID**.
+3. Kør sync som normalt, og åbn Nexus fra testsiden. Sæt evt. "Target link" øverst (standard `lti/launch/course-insights`; `lti/launch` er Nexus' egen launch).
+
+Indstillinger i `<path>/blackboard/.env` (genstart med `docker compose up -d mock`):
+
+| Variabel | Standard | |
+|---|---|---|
+| `BB_MOCK_TOOL_URL` | (fra `--tool-url`) | Nexus' rod-URL: login på `/lti/login`, id_token til `/lti/launch...` |
+| `BB_MOCK_BACKFILL_DAYS` | `30` | dages historik for nye medlemskaber |
+| `BB_MOCK_DAILY_CALL_LIMIT` | `0` | fx `50`: svar 429 med `Retry-After` til midnat UTC efter så mange kald pr. døgn, som Anthologys grænse. `0` = ingen grænse |
+
+**Det kan mocken ikke:** Den kan ikke skrive (kun GET efter token). Den tjekker ikke entitlements, så "mangler rettighed" kan ikke testes. Den har ingen Ultra-brugerflade, ingen deep linking og ingen LTI Advantage-tjenester (NRPS, AGS). Uoverensstemmelser med den rigtige Learn fanges derfor ikke her. Logs: `docker compose logs -f mock`.
+
 ## RAM
 
-Begge LMS'er kan køre samtidig, når de bare leverer demodata gennem API'et. Omtrentligt forbrug i tomgang:
+Alle tre kan køre samtidig, når de bare leverer demodata gennem API'et. Omtrentligt forbrug i tomgang:
 
 | | RAM |
 |---|---|
 | Canvas (1 Passenger-proces, jobs-worker, Postgres, Redis) | 2-2,5 GB |
 | Moodle (Apache/PHP, MariaDB) | 0,4-0,6 GB |
+| Blackboard-mock | under 0,05 GB |
 | Traefik og OS | 0,3-0,4 GB |
 
 Det er tæt på 4 GB, så swapfilen tager spidserne. Spidserne kommer især, når Canvas starter (asset-load) og ved tunge baggrundsjob. Hold øje med `free -h` og `docker stats --no-stream`. Hvis serveren swapper hele tiden, så stop den ene stak (`docker compose stop`) eller opgradér dropletten til 8 GB.
